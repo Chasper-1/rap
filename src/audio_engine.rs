@@ -1,82 +1,157 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek};
 use std::sync::Arc;
+use std::num::NonZero;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use crate::logger;
 
-#[allow(unused_imports)]
-use rodio::{Decoder, Source, Sink, OutputStream, OutputStreamHandle};
+// rodio 0.22.2
+use rodio::{Decoder, Player, Source};
+use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
+
+// ИСПРАВЛЕНИЕ: Импортируем строгие типы SampleRate и Channels для opus-codec 0.1.2
+use opus_codec::{Decoder as OpusDecoder, SampleRate, Channels}; 
+use ogg::PacketReader;
 
 use lofty::prelude::*;
 use lofty::probe::Probe;
 
+pub struct OpusSource<R: Read + Seek> {
+    packet_reader: PacketReader<R>,
+    decoder: OpusDecoder,
+    sample_buffer: Vec<f32>,
+    buffer_pos: usize,
+    sample_rate: u32,
+    channels: u16,
+}
+
+impl<R: Read + Seek> OpusSource<R> {
+    pub fn new(reader: R, channels: u16) -> Option<Self> {
+        // ИСПРАВЛЕНИЕ E0308: Передаем спец-типы вместо i32/usize
+        let rate = SampleRate::Hz48000;
+        let chans = if channels == 1 { Channels::Mono } else { Channels::Stereo };
+
+        let decoder = OpusDecoder::new(rate, chans).ok()?;
+        let packet_reader = PacketReader::new(reader);
+
+        Some(Self {
+            packet_reader,
+            decoder,
+            sample_buffer: Vec::new(),
+            buffer_pos: 0,
+            sample_rate: 48000,
+            channels,
+        })
+    }
+}
+
+impl<R: Read + Seek> Iterator for OpusSource<R> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.buffer_pos >= self.sample_buffer.len() {
+            loop {
+                match self.packet_reader.read_packet() {
+                    Ok(Some(packet)) => {
+                        if packet.data.starts_with(b"OpusHead") || packet.data.starts_with(b"OpusTags") {
+                            continue;
+                        }
+
+                        let mut pcm_buf = vec![0.0f32; 5760 * self.channels as usize];
+                        // ИСПРАВЛЕНИЕ E0308: Передаем &[u8] напрямую, а не Option
+                        if let Ok(decoded_size) = self.decoder.decode_float(&packet.data, &mut pcm_buf, false) {
+                            self.sample_buffer = pcm_buf[..decoded_size * self.channels as usize].to_vec();
+                            self.buffer_pos = 0;
+                            break;
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+        }
+
+        let sample = self.sample_buffer.get(self.buffer_pos).cloned();
+        self.buffer_pos += 1;
+        sample
+    }
+}
+
+impl<R: Read + Seek> Source for OpusSource<R> {
+    fn current_span_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> NonZero<u16> { NonZero::new(self.channels).unwrap_or(NonZero::new(2).unwrap()) }
+    fn sample_rate(&self) -> NonZero<u32> { NonZero::new(self.sample_rate).unwrap_or(NonZero::new(48000).unwrap()) }
+    fn total_duration(&self) -> Option<Duration> { None }
+}
+
 pub struct AudioEngine {
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
-    sink: Arc<Mutex<Sink>>,
+    _stream: MixerDeviceSink,
+    player: Arc<Mutex<Player>>,
 }
 
 impl AudioEngine {
     pub fn new() -> Self {
-        logger::log("System: Init High-Performance Audio Engine...");
-
-        let (stream, handle) = OutputStream::try_default()
-            .expect("Ошибка ALSA: Не удалось найти устройство вывода. Проверь драйверы.");
-        let sink = Sink::try_new(&handle).expect("Не удалось инициализировать Sink.");
+        logger::log("System: Init Audio Engine...");
+        let mut stream = DeviceSinkBuilder::open_default_sink()
+            .expect("Ошибка: Устройство вывода не найдено.");
+        stream.log_on_drop(false);
+        let player = Player::connect_new(stream.mixer());
 
         Self {
             _stream: stream,
-            handle,
-            sink: Arc::new(Mutex::new(sink)),
+            player: Arc::new(Mutex::new(player)),
         }
     }
 
     pub async fn play(&self, path: &str) -> (String, String) {
         let path_str = path.to_string();
-        let handle = self.handle.clone();
-        let sink_lock = self.sink.clone();
-
-        let (artist, title) = self.extract_metadata(&path_str);
+        let player_lock = self.player.clone();
+        let (artist, title, _, channels) = self.get_audio_info(&path_str);
 
         tokio::spawn(async move {
-            let source = tokio::task::spawn_blocking(move || {
+            let source_result = tokio::task::spawn_blocking(move || -> Option<Box<dyn Source + Send>> {
                 let file = File::open(&path_str).ok()?;
-                Decoder::new(BufReader::new(file)).ok()
-            }).await.unwrap_or(None);
+                let reader = BufReader::new(file);
 
-            if let Some(src) = source {
-                let mut sink = sink_lock.lock().await;
-                if let Ok(new_sink) = Sink::try_new(&handle) {
-                    new_sink.append(src);
-                    *sink = new_sink;
+                if path_str.to_lowercase().ends_with(".opus") {
+                    OpusSource::new(reader, channels)
+                        .map(|s| Box::new(s) as Box<dyn Source + Send>)
+                } else {
+                    Decoder::new(reader).ok()
+                        .map(|d| Box::new(d) as Box<dyn Source + Send>)
                 }
+            }).await;
+
+            if let Ok(Some(src)) = source_result {
+                let player = player_lock.lock().await;
+                player.append(src);
             }
         });
-
         (artist, title)
     }
 
-    fn extract_metadata(&self, path: &str) -> (String, String) {
-        let mut artist = "Unknown Artist".to_string();
-        let mut title = "Unknown Track".to_string();
-
-        if let Ok(tagged_file) = Probe::open(path).and_then(|p| p.read()) {
-            let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
-            if let Some(t) = tag {
-                artist = t.artist().map(|s| s.to_string()).unwrap_or(artist);
-                title = t.title().map(|s| s.to_string()).unwrap_or(title);
+    fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
+        let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
+        if let Ok(probe) = Probe::open(path) {
+            // ИСПРАВЛЕНИЕ E0425: Объявляем tagged_file здесь, чтобы он был доступен ниже
+            if let Ok(tagged_file) = probe.read() {
+                let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+                if let Some(t) = tag {
+                    info.0 = t.artist().map(|s| s.to_string()).unwrap_or(info.0);
+                    info.1 = t.title().map(|s| s.to_string()).unwrap_or(info.1);
+                }
+                let props = tagged_file.properties();
+                info.2 = props.sample_rate().unwrap_or(48000);
+                info.3 = props.channels().map(|c| c as u16).unwrap_or(2);
             }
         }
-
-        if title == "Unknown Track" {
-            title = path.split('/').last().unwrap_or(path).to_string();
+        if info.1 == "Unknown" {
+            info.1 = path.split('/').last().unwrap_or(path).to_string();
         }
-
-        (artist, title)
+        info
     }
 
     pub async fn is_empty(&self) -> bool {
-        let sink = self.sink.lock().await;
-        sink.empty()
+        self.player.lock().await.empty()
     }
 }
