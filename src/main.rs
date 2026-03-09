@@ -1,51 +1,36 @@
-mod mpv_handler;
+mod audio_engine;
 mod logger;
-mod config;
-mod parser;
-mod tui;
 
-use mpv_handler::{MpvController, PlayerEvent};
-use logger::log;
+use audio_engine::AudioEngine;
 use std::env;
+use std::io::{self, Write};
+use std::time::Instant;
+use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Использование: rmpt <путь_к_музыке>");
-        std::process::exit(1);
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.is_empty() {
+        eprintln!("Usage: rmpt <path>");
+        return;
     }
-    let target_path = &args[1];
-
-    log(&format!("RMPT запущен. Цель: {}", target_path));
-
-    let (player, mut event_rx) = MpvController::new();
-    player.load(target_path); 
-
-    loop {
-        tokio::select! {
-            Some(event) = event_rx.recv() => {
-                match event {
-                    PlayerEvent::TrackStarted => {
-                        log("--- Новый трек начался ---");
-                    }
-                    PlayerEvent::TimePos(pos) => {
-                        if (pos as u64) % 5 == 0 {
-                            log(&format!("Прогресс: {:.0}с", pos));
-                        }
-                    }
-                    PlayerEvent::MetadataUpdate { artist, title } => {
-                        log(&format!("Метаданные: {} - {}", artist, title));
-                    }
-                    PlayerEvent::EndFile(reason) => {
-                        log(&format!("Воспроизведение окончено. Причина: {}", reason));
-                    }
-                }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                log("Выход...");
-                break;
-            }
-        }
+    let path = args.join(" ");
+    
+    let engine = AudioEngine::new();
+    let (artist, title) = engine.play(&path).await;
+    
+    println!("\n▶ {} - {}", artist, title);
+    let start_time = Instant::now();
+    
+    while !engine.is_empty() {
+        let elapsed = start_time.elapsed().as_secs();
+        let minutes = elapsed / 60;
+        let seconds = elapsed % 60;
+        
+        // Печатаем прогресс, не мешая логам (если они прилетят выше)
+        print!("\r[⏳ {:02}:{:02}] ", minutes, seconds);
+        io::stdout().flush().unwrap();
+        
+        sleep(Duration::from_millis(200)).await;
     }
 }
