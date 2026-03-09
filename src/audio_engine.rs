@@ -18,25 +18,21 @@ impl AudioEngine {
         let device = host.default_output_device().expect("No audio device");
         let config = device.default_output_config().unwrap();
 
+        // CPAL просто выгребает всё, что прилетело в канал
         std::thread::spawn(move || {
-            let mut buffer = Vec::new();
             let stream = device.build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _| {
-                    for sample in data.iter_mut() {
-                        if buffer.is_empty() {
-                            if let Ok(new_frame) = rx.try_recv() {
-                                buffer = new_frame;
-                            }
-                        }
-                        *sample = if !buffer.is_empty() { buffer.remove(0) } else { 0.0 };
+                    if let Ok(frame) = rx.try_recv() {
+                        let len = frame.len().min(data.len());
+                        data[..len].copy_from_slice(&frame[..len]);
                     }
                 },
                 |err| logger::log(&format!("Error: CPAL stream - {}", err)),
                 None
             ).unwrap();
             stream.play().unwrap();
-            loop { std::thread::sleep(std::time::Duration::from_millis(10)); }
+            loop { std::thread::sleep(std::time::Duration::from_millis(5)); }
         });
 
         Self { tx }
@@ -46,32 +42,36 @@ impl AudioEngine {
         let tx = self.tx.clone();
         let path_str = path.to_string();
         
-        let mut artist = "Unknown".to_string();
-        let mut title = "Unknown".to_string();
-
-        if let Ok(ictx) = ffmpeg::format::input(&Path::new(&path_str)) {
+        // Метаданные вытаскиваем один раз через FFmpeg
+        let (artist, title) = if let Ok(ictx) = ffmpeg::format::input(&Path::new(&path_str)) {
+            let mut a = "Unknown".to_string();
+            let mut t = "Unknown".to_string();
             for (key, value) in ictx.metadata().iter() {
                 match key.to_lowercase().as_str() {
-                    "artist" => artist = value.to_string(),
-                    "title" => title = value.to_string(),
+                    "artist" => a = value.to_string(),
+                    "title" => t = value.to_string(),
                     _ => {}
                 }
             }
-        }
+            (a, t)
+        } else {
+            ("Unknown".to_string(), "Unknown".to_string())
+        };
 
-        logger::log(&format!("Engine: Decoding started [{}]", path_str));
+        logger::log(&format!("Engine: Playing {} - {}", artist, title));
 
         tokio::task::spawn_blocking(move || {
             let mut ictx = ffmpeg::format::input(&Path::new(&path_str)).unwrap();
             let stream = ictx.streams().best(ffmpeg::media::Type::Audio).unwrap();
             let stream_index = stream.index();
-            let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters()).unwrap();
-            let mut decoder = context.decoder().audio().unwrap();
+            let mut decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+                .unwrap()
+                .decoder()
+                .audio()
+                .unwrap();
 
-            let mut resampler = ffmpeg::software::resampling::context::Context::get(
-                decoder.format(),
-                decoder.channel_layout(),
-                decoder.rate(),
+            // Пусть FFmpeg сам ресемплит Opus (48k) в то, что хочет твоя система
+            let mut resampler = decoder.resampler(
                 ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
                 ffmpeg::ChannelLayout::STEREO,
                 48000,
@@ -89,7 +89,6 @@ impl AudioEngine {
                     }
                 }
             }
-            logger::log("Engine: Track finished");
         });
 
         (artist, title)
