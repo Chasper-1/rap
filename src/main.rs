@@ -1,5 +1,7 @@
 mod audio_engine;
 mod logger;
+mod config;
+mod parser;
 
 use audio_engine::AudioEngine;
 use std::env;

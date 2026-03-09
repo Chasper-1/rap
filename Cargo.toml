@@ -1,6 +1,6 @@
 [package]
 name = "rmpt"
-version = "0.1.7"
+version = "0.1.9"
 edition = "2024"
 
 [dependencies]
@@ -10,6 +10,8 @@ opus-codec = "0.1.2"
 ogg = "0.9"
 rodio = { version = "0.22.2", features = ["symphonia-all"] }
 tokio = { version = "1.50.0", features = ["full"] }
+toml = "1.0.6"
+serde = { version = "1.0.228", features = ["derive"] }
 
 
 [profile.release]

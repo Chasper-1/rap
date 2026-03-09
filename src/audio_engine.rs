@@ -131,20 +131,36 @@ impl AudioEngine {
     }
 
     fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
-        let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
+        let mut info = ("Unknown Artist".to_string(), "Unknown Track".to_string(), 48000, 2);
+        
         if let Ok(probe) = Probe::open(path) {
-            // ИСПРАВЛЕНИЕ E0425: Объявляем tagged_file здесь, чтобы он был доступен ниже
             if let Ok(tagged_file) = probe.read() {
                 let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+                
                 if let Some(t) = tag {
-                    info.0 = t.artist().map(|s| s.to_string()).unwrap_or(info.0);
+                    // Просто забираем сырые данные
+                    let raw_artist = t.artist().map(|s| s.to_string()).unwrap_or(info.0.clone());
                     info.1 = t.title().map(|s| s.to_string()).unwrap_or(info.1);
+                
+                    // Скармливаем артиста модулю, он сам разберется с логами
+                    let parsed_list = crate::parser::artist::process_and_log_artists(&raw_artist);
+                    
+                    // В info.0 кладем либо первого найденного, либо оставляем как было
+                    info.0 = parsed_list.first().cloned().unwrap_or(raw_artist);
+                
+                    // Остальное просто достаем для возврата, без всяких logger::log
+                    let _album = t.album().map(|s| s.to_string()).unwrap_or_else(|| "Unknown".to_string());
+                    let _year = t.get_string(lofty::prelude::ItemKey::Year)
+                        .or_else(|| t.get_string(lofty::prelude::ItemKey::RecordingDate))
+                        .unwrap_or("---");
                 }
+    
                 let props = tagged_file.properties();
                 info.2 = props.sample_rate().unwrap_or(48000);
                 info.3 = props.channels().map(|c| c as u16).unwrap_or(2);
             }
         }
+        
         if info.1 == "Unknown" {
             info.1 = path.split('/').last().unwrap_or(path).to_string();
         }
