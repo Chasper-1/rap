@@ -1,12 +1,12 @@
 [package]
 name = "rmpt"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 
 [dependencies]
 chrono = "0.4.44"
-cpal = "0.17.3"
-ffmpeg-next = "8.0.0"
+lofty = "0.23.2"
+rodio = { version = "0.20.0", features = ["symphonia-all"] }
 tokio = { version = "1.50.0", features = ["full"] }
 
 

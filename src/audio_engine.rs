@@ -1,92 +1,54 @@
-use ffmpeg_next as ffmpeg;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use tokio::sync::mpsc;
-use std::path::Path;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use crate::logger;
 
+#[allow(unused_imports)]
+use rodio::{Decoder, Source, Sink, OutputStream, OutputStreamHandle};
+
+use lofty::prelude::*;
+use lofty::probe::Probe;
+
 pub struct AudioEngine {
-    tx: mpsc::UnboundedSender<Vec<f32>>,
+    _stream: OutputStream,
+    handle: OutputStreamHandle,
+    sink: Arc<Mutex<Sink>>,
 }
 
 impl AudioEngine {
     pub fn new() -> Self {
-        logger::log("System: Init FFmpeg...");
-        ffmpeg::init().expect("FFmpeg init failed");
+        logger::log("System: Init High-Performance Audio Engine...");
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<f32>>();
-        let host = cpal::default_host();
-        let device = host.default_output_device().expect("No audio device");
-        let config = device.default_output_config().unwrap();
+        let (stream, handle) = OutputStream::try_default()
+            .expect("Ошибка ALSA: Не удалось найти устройство вывода. Проверь драйверы.");
+        let sink = Sink::try_new(&handle).expect("Не удалось инициализировать Sink.");
 
-        // CPAL просто выгребает всё, что прилетело в канал
-        std::thread::spawn(move || {
-            let stream = device.build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _| {
-                    if let Ok(frame) = rx.try_recv() {
-                        let len = frame.len().min(data.len());
-                        data[..len].copy_from_slice(&frame[..len]);
-                    }
-                },
-                |err| logger::log(&format!("Error: CPAL stream - {}", err)),
-                None
-            ).unwrap();
-            stream.play().unwrap();
-            loop { std::thread::sleep(std::time::Duration::from_millis(5)); }
-        });
-
-        Self { tx }
+        Self {
+            _stream: stream,
+            handle,
+            sink: Arc::new(Mutex::new(sink)),
+        }
     }
 
     pub async fn play(&self, path: &str) -> (String, String) {
-        let tx = self.tx.clone();
         let path_str = path.to_string();
-        
-        // Метаданные вытаскиваем один раз через FFmpeg
-        let (artist, title) = if let Ok(ictx) = ffmpeg::format::input(&Path::new(&path_str)) {
-            let mut a = "Unknown".to_string();
-            let mut t = "Unknown".to_string();
-            for (key, value) in ictx.metadata().iter() {
-                match key.to_lowercase().as_str() {
-                    "artist" => a = value.to_string(),
-                    "title" => t = value.to_string(),
-                    _ => {}
-                }
-            }
-            (a, t)
-        } else {
-            ("Unknown".to_string(), "Unknown".to_string())
-        };
+        let handle = self.handle.clone();
+        let sink_lock = self.sink.clone();
 
-        logger::log(&format!("Engine: Playing {} - {}", artist, title));
+        let (artist, title) = self.extract_metadata(&path_str);
 
-        tokio::task::spawn_blocking(move || {
-            let mut ictx = ffmpeg::format::input(&Path::new(&path_str)).unwrap();
-            let stream = ictx.streams().best(ffmpeg::media::Type::Audio).unwrap();
-            let stream_index = stream.index();
-            let mut decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
-                .unwrap()
-                .decoder()
-                .audio()
-                .unwrap();
+        tokio::spawn(async move {
+            let source = tokio::task::spawn_blocking(move || {
+                let file = File::open(&path_str).ok()?;
+                Decoder::new(BufReader::new(file)).ok()
+            }).await.unwrap_or(None);
 
-            // Пусть FFmpeg сам ресемплит Opus (48k) в то, что хочет твоя система
-            let mut resampler = decoder.resampler(
-                ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
-                ffmpeg::ChannelLayout::STEREO,
-                48000,
-            ).unwrap();
-
-            for (stream, packet) in ictx.packets() {
-                if stream.index() == stream_index {
-                    if decoder.send_packet(&packet).is_ok() {
-                        let mut decoded = ffmpeg::frame::Audio::empty();
-                        while decoder.receive_frame(&mut decoded).is_ok() {
-                            let mut resampled = ffmpeg::frame::Audio::empty();
-                            resampler.run(&decoded, &mut resampled).unwrap();
-                            let _ = tx.send(resampled.plane(0).to_vec());
-                        }
-                    }
+            if let Some(src) = source {
+                let mut sink = sink_lock.lock().await;
+                if let Ok(new_sink) = Sink::try_new(&handle) {
+                    new_sink.append(src);
+                    *sink = new_sink;
                 }
             }
         });
@@ -94,5 +56,27 @@ impl AudioEngine {
         (artist, title)
     }
 
-    pub fn is_empty(&self) -> bool { false }
+    fn extract_metadata(&self, path: &str) -> (String, String) {
+        let mut artist = "Unknown Artist".to_string();
+        let mut title = "Unknown Track".to_string();
+
+        if let Ok(tagged_file) = Probe::open(path).and_then(|p| p.read()) {
+            let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+            if let Some(t) = tag {
+                artist = t.artist().map(|s| s.to_string()).unwrap_or(artist);
+                title = t.title().map(|s| s.to_string()).unwrap_or(title);
+            }
+        }
+
+        if title == "Unknown Track" {
+            title = path.split('/').last().unwrap_or(path).to_string();
+        }
+
+        (artist, title)
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        let sink = self.sink.lock().await;
+        sink.empty()
+    }
 }
