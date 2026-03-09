@@ -30,8 +30,7 @@ async fn main() {
     logger::log("Движок инициализирован");
 
     // 3. Запускаем воспроизведение и получаем метаданные
-    let (artist, title) = engine.play(&path).await;
-    logger::log(&format!("▶ {} - {}", artist, title));
+    engine.play(&path).await;
 
     // 4. Ждём немного, чтобы задача успела стартовать
     logger::log("Ожидание инициализации воспроизведения...");
