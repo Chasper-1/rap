@@ -55,7 +55,7 @@ async fn main() {
         let seconds = elapsed % 60;
         
         // Прогресс выводим в той же строке (это не лог, а интерактивный интерфейс)
-        print!("\r[⏳ {:02}:{:02}] ", minutes, seconds);
+        print!("\r[{:02}:{:02}] ", minutes, seconds);
         io::stdout().flush().unwrap();
         
         sleep(Duration::from_millis(200)).await;
