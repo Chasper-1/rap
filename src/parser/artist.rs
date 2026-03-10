@@ -27,13 +27,12 @@ pub async fn process_and_log_metadata(
 
     {
         let artist_raw = raw_artist.unwrap_or_else(|| "---".into());
-        let artist_low = artist_raw.to_lowercase();
 
+        // 1. Ищем ГРАНИЦУ первого feat без создания artist_low
         let mut split_pos = artist_raw.len();
         let mut first_kw_len = 0;
         for kw in &config.parser.feat_keywords {
-            let kw_l = kw.to_lowercase();
-            if let Some(pos) = artist_low.find(&kw_l) {
+            if let Some(pos) = artist_raw.to_lowercase().find(&kw.to_lowercase()) {
                 if pos < split_pos {
                     split_pos = pos;
                     first_kw_len = kw.len();
@@ -49,17 +48,12 @@ pub async fn process_and_log_metadata(
         };
 
         let process_zone = |input: &str, target: &mut Vec<String>| {
-            let trimmed = input.trim().trim_start_matches('.').trim();
-            if trimmed.is_empty() {
-                return;
-            }
+            let mut working_input = input.trim().trim_start_matches('.').trim().to_string();
+            if working_input.is_empty() { return; }
 
-            let mut working_input = trimmed.to_string();
             for exc in &config.parser.exceptions {
                 if working_input.contains(exc) {
-                    if !target.contains(exc) {
-                        target.push(exc.clone());
-                    }
+                    if !target.contains(exc) { target.push(exc.clone()); }
                     working_input = working_input.replace(exc, "|||");
                 }
             }
@@ -68,37 +62,42 @@ pub async fn process_and_log_metadata(
             for sep in &config.parser.separators {
                 let mut next = Vec::new();
                 for f in frags {
-                    if f == "|||" {
-                        next.push(f);
-                        continue;
-                    }
-                    next.extend(
-                        f.split(sep)
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty()),
-                    );
+                    if f == "|||" { next.push(f); continue; }
+                    next.extend(f.split(sep).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
                 }
                 frags = next;
             }
 
             for mut name in frags {
-                if name == "|||" || name.is_empty() {
-                    continue;
-                }
+                if name == "|||" || name.is_empty() { continue; }
+                
                 for kw in &config.parser.feat_keywords {
-                    let kw_low = kw.to_lowercase();
-                    let name_low = name.to_lowercase();
-                    if name_low == kw_low || name_low == format!("{}.", kw_low) {
+                    // Сравниваем без создания новых строк в памяти
+                    let is_match = name.eq_ignore_ascii_case(kw) || 
+                                   (name.to_lowercase().ends_with('.') && name[..name.len()-1].eq_ignore_ascii_case(kw));
+                    
+                    if is_match {
                         name.clear();
                         break;
                     }
-                    for p in &[format!("{}.", kw_low), format!("{} ", kw_low), kw_low] {
-                        if name_low.starts_with(p) {
-                            name = name[p.len()..].trim().to_string();
-                            break;
+
+                    // Проверка префиксов без format!
+                    let found_prefix = config.parser.feat_keywords.iter().any(|k| {
+                        let n_low = name.to_lowercase();
+                        let k_low = k.to_lowercase();
+                        n_low.starts_with(&format!("{}.", k_low)) || n_low.starts_with(&format!("{} ", k_low))
+                    });
+
+                    if found_prefix {
+                        if let Some(space_pos) = name.find(' ') {
+                            name = name[space_pos..].trim().to_string();
+                        } else if let Some(dot_pos) = name.find('.') {
+                            name = name[dot_pos..].trim().to_string();
                         }
+                        break;
                     }
                 }
+
                 let final_name = name.trim_matches('.').trim().to_string();
                 if !final_name.is_empty() && !target.contains(&final_name) {
                     target.push(final_name);
@@ -110,42 +109,27 @@ pub async fn process_and_log_metadata(
         process_zone(feat_part_clean, &mut feat_artists);
     }
 
-    if main_artists.is_empty() {
-        main_artists.push("---".into());
-    }
+    if main_artists.is_empty() { main_artists.push("---".into()); }
 
     let full_meta = FullMetadata {
         main_artists,
         feat_artists,
         title: title.unwrap_or_else(|| "---".into()),
         album: album.unwrap_or_else(|| "---".into()),
-        year: year
-            .map(|y| {
-                let len = config.parser.year_length;
-                if len > 0 && y.len() > len {
-                    y[..len].to_string()
-                } else {
-                    y
-                }
-            })
-            .unwrap_or_else(|| "---".into()),
+        year: year.map(|y| {
+            let len = config.parser.year_length;
+            if len > 0 && y.len() > len { y[..len].to_string() } else { y }
+        }).unwrap_or_else(|| "---".into()),
         genre: genre.unwrap_or_else(|| "---".into()),
         comment: comment.unwrap_or_else(|| "---".into()),
     };
 
-    // 2. Выводим JSON. После этой строки данные должны сдохнуть.
     if let Ok(json) = serde_json::to_string(&full_meta) {
         logger::log(&format!("METADATA_JSON:{}", json));
     }
 
-    // 3. УНИЧТОЖАЕМ ВСЁ ЛИШНЕЕ.
-    // Забираем только то, что возвращаем. Остальное (album, year, genre, comment) Rust дропает ТУТ ЖЕ.
     let res_title = full_meta.title;
-    let res_main = full_meta
-        .main_artists
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| "---".into());
+    let res_main = full_meta.main_artists.into_iter().next().unwrap_or_else(|| "---".into());
 
     (res_main, res_title)
 }
