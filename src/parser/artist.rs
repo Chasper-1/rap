@@ -29,11 +29,11 @@ pub async fn process_and_log_metadata(
         let artist_raw = raw_artist.unwrap_or_else(|| "---".into());
         let artist_low = artist_raw.to_lowercase();
 
-        // 1. Ищем ГРАНИЦУ первого feat для разделения зон
         let mut split_pos = artist_raw.len();
         let mut first_kw_len = 0;
         for kw in &config.parser.feat_keywords {
-            if let Some(pos) = artist_low.find(&kw.to_lowercase()) {
+            let kw_l = kw.to_lowercase();
+            if let Some(pos) = artist_low.find(&kw_l) {
                 if pos < split_pos {
                     split_pos = pos;
                     first_kw_len = kw.len();
@@ -42,23 +42,19 @@ pub async fn process_and_log_metadata(
         }
 
         let (main_part_raw, feat_part_raw) = artist_raw.split_at(split_pos);
-        // Убираем хвост первого триггера, если он есть
         let feat_part_clean = if feat_part_raw.len() > first_kw_len {
             &feat_part_raw[first_kw_len..]
         } else {
             ""
         };
 
-        // 2. Обработка зон с жесткой фильтрацией мусора
         let process_zone = |input: &str, target: &mut Vec<String>| {
-            let trimmed_input = input.trim().trim_start_matches('.').trim();
-            if trimmed_input.is_empty() {
+            let trimmed = input.trim().trim_start_matches('.').trim();
+            if trimmed.is_empty() {
                 return;
             }
 
-            let mut working_input = trimmed_input.to_string();
-
-            // Вынимаем исключения
+            let mut working_input = trimmed.to_string();
             for exc in &config.parser.exceptions {
                 if working_input.contains(exc) {
                     if !target.contains(exc) {
@@ -68,7 +64,6 @@ pub async fn process_and_log_metadata(
                 }
             }
 
-            // Дробим по сепараторам
             let mut frags = vec![working_input];
             for sep in &config.parser.separators {
                 let mut next = Vec::new();
@@ -86,53 +81,26 @@ pub async fn process_and_log_metadata(
                 frags = next;
             }
 
-            // 3. ФИНАЛЬНЫЙ ФИЛЬТР: чистим каждый фрагмент от feat-слов
-            for f in frags {
-                if f == "|||" || f.is_empty() {
+            for mut name in frags {
+                if name == "|||" || name.is_empty() {
                     continue;
                 }
-
-                let mut name = f.clone();
-                let mut is_junk = false;
-
                 for kw in &config.parser.feat_keywords {
                     let kw_low = kw.to_lowercase();
                     let name_low = name.to_lowercase();
-
-                    // Если фрагмент целиком является feat-словом
                     if name_low == kw_low || name_low == format!("{}.", kw_low) {
-                        is_junk = true;
+                        name.clear();
                         break;
                     }
-
-                    // Если feat затесался внутри фрагмента (feat. Казян)
-                    for pattern in &[
-                        format!("{}.", kw_low),
-                        format!("{} ", kw_low),
-                        kw_low.clone(),
-                    ] {
-                        if name_low.starts_with(pattern) {
-                            name = name[pattern.len()..].trim().to_string();
+                    for p in &[format!("{}.", kw_low), format!("{} ", kw_low), kw_low] {
+                        if name_low.starts_with(p) {
+                            name = name[p.len()..].trim().to_string();
                             break;
                         }
                     }
                 }
-
-                if is_junk || name.is_empty() {
-                    continue;
-                }
-
-                // Чистим артефакты (точки по краям)
                 let final_name = name.trim_matches('.').trim().to_string();
-
-                if final_name.contains(' ') && !config.parser.exceptions.contains(&final_name) {
-                    logger::log(&format!(
-                        "WARNING: Possible missing separator in '{}'",
-                        final_name
-                    ));
-                }
-
-                if !target.contains(&final_name) && !final_name.is_empty() {
+                if !final_name.is_empty() && !target.contains(&final_name) {
                     target.push(final_name);
                 }
             }
@@ -146,35 +114,38 @@ pub async fn process_and_log_metadata(
         main_artists.push("---".into());
     }
 
-    let final_year = year
-        .map(|y| {
-            let len = config.parser.year_length;
-            if len > 0 && y.len() > len {
-                y[..len].to_string()
-            } else {
-                y
-            }
-        })
-        .unwrap_or_else(|| "---".into());
-
-    // Создаем финальный объект. Владение (move) переходит сюда.
     let full_meta = FullMetadata {
-        main_artists, // Передали и забыли
-        feat_artists, // Передали и забыли
+        main_artists,
+        feat_artists,
         title: title.unwrap_or_else(|| "---".into()),
         album: album.unwrap_or_else(|| "---".into()),
-        year: final_year,
+        year: year
+            .map(|y| {
+                let len = config.parser.year_length;
+                if len > 0 && y.len() > len {
+                    y[..len].to_string()
+                } else {
+                    y
+                }
+            })
+            .unwrap_or_else(|| "---".into()),
         genre: genre.unwrap_or_else(|| "---".into()),
         comment: comment.unwrap_or_else(|| "---".into()),
     };
 
-    // Вывели JSON в лог — это единственное, что остается во внешнем мире
+    // 2. Выводим JSON. После этой строки данные должны сдохнуть.
     if let Ok(json) = serde_json::to_string(&full_meta) {
         logger::log(&format!("METADATA_JSON:{}", json));
     }
 
-    // Достаем только то, что нужно для возврата, остальное FullMetadata уничтожается здесь
-    let res_main = full_meta.main_artists.first().cloned().unwrap_or_else(|| "---".into());
-        (res_main, full_meta.title)
-    // Все промежуточные данные (config, tokens, и т.д.) здесь уже мертвы.
+    // 3. УНИЧТОЖАЕМ ВСЁ ЛИШНЕЕ.
+    // Забираем только то, что возвращаем. Остальное (album, year, genre, comment) Rust дропает ТУТ ЖЕ.
+    let res_title = full_meta.title;
+    let res_main = full_meta
+        .main_artists
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "---".into());
+
+    (res_main, res_title)
 }
