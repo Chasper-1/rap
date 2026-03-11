@@ -1,7 +1,4 @@
-use ratatui::{
-    layout::Rect,
-    Frame,
-};
+use ratatui::{layout::Rect, Frame};
 use crate::config::config::Config;
 
 pub fn draw_search_widget(f: &mut Frame, _area: Rect) {
@@ -11,59 +8,46 @@ pub fn draw_search_widget(f: &mut Frame, _area: Rect) {
     let w = conf.ui.search_box_width;
     let h = conf.ui.search_box_height;
 
-    // 1. ВЕРХНЯЯ ЛИНИЯ (y)
-    draw_line_button(f, x + 2, y, "SEARCH", false); // Без скобок
-    for i in 0..3 {
-        let btn_x = x + w - (4 - i as u16) * 4;
-        draw_line_button(f, btn_x, y, &(i + 1).to_string(), true); // Со скобками
+    // --- 1. СТРОКА SEARCH (y) ---
+    // Выводим только текст, без рамок
+    for (i, ch) in "SEARCH".chars().enumerate() {
+        if let Some(cell) = f.buffer_mut().cell_mut((x + 2 + i as u16, y)) { cell.set_symbol(&ch.to_string()); }
     }
-
-    // 3. СРЕДНЯЯ ЛИНИЯ (y + 2)
-    for i in 0..w {
-        let sym = if i == 0 { "├" } else { "─" };
-        if let Some(cell) = f.buffer_mut().cell_mut((x + i, y + 2)) {
-            cell.set_symbol(sym);
+    // Кнопки [1][2][3]
+    let btns_top = [("[3]", 5), ("[2]", 9), ("[1]", 13)];
+    for (txt, offset) in btns_top {
+        for (i, ch) in txt.chars().enumerate() {
+            if let Some(cell) = f.buffer_mut().cell_mut((x + w - offset + i as u16, y)) { cell.set_symbol(&ch.to_string()); }
         }
     }
-    draw_line_button(f, x + 2, y + 2, "REGEX", false); // Без скобок
-    for i in 0..3 {
-        let btn_x = x + w - (4 - i as u16) * 4;
-        draw_line_button(f, btn_x, y + 2, &(i + 4).to_string(), true); // Со скобками
+
+    // --- 2. СТРОКА REGEX (y + 2) ---
+    // Здесь рисуем перекладину, раз она отделяет ввод
+    for i in 1..w-1 {
+        if let Some(cell) = f.buffer_mut().cell_mut((x + i, y + 2)) { cell.set_symbol("─"); }
+    }
+    if let Some(cell) = f.buffer_mut().cell_mut((x, y + 2)) { cell.set_symbol("├"); }
+    if let Some(cell) = f.buffer_mut().cell_mut((x + w - 1, y + 2)) { cell.set_symbol("┤"); }
+    
+    for (i, ch) in "REGEX".chars().enumerate() {
+        if let Some(cell) = f.buffer_mut().cell_mut((x + 2 + i as u16, y + 2)) { cell.set_symbol(&ch.to_string()); }
+    }
+    // Кнопки [4][5][6]
+    let btns_mid = [("[6]", 5), ("[5]", 9), ("[4]", 13)];
+    for (txt, offset) in btns_mid {
+        for (i, ch) in txt.chars().enumerate() {
+            if let Some(cell) = f.buffer_mut().cell_mut((x + w - offset + i as u16, y + 2)) { cell.set_symbol(&ch.to_string()); }
+        }
     }
 
-    // 5. БОКОВУШКИ (Твой оригинальный код)
+    // --- 3. БОКОВЫЕ ЛИНИИ ---
+    // Рисуем │ только по бокам, не заходя на верхнюю и нижнюю границы
     for row in 0..h {
         let cur_y = y + row;
-        if cur_y == y { continue; }
-
-        if cur_y != y + 2 && cur_y != y + h.saturating_sub(1) {
+        // Не рисуем углы, только палки │ там, где они не пересекаются с REGEX
+        if cur_y != y + 2 {
             if let Some(cell) = f.buffer_mut().cell_mut((x, cur_y)) { cell.set_symbol("│"); }
             if let Some(cell) = f.buffer_mut().cell_mut((x + w - 1, cur_y)) { cell.set_symbol("│"); }
-        } else if cur_y == y + 2 {
-            if let Some(cell) = f.buffer_mut().cell_mut((x + w - 1, cur_y)) { cell.set_symbol("┤"); }
-        }
-    }
-}
-
-// Универсальная рисовалка: use_brackets рулит логикой
-fn draw_line_button(f: &mut Frame, x: u16, y: u16, label: &str, use_brackets: bool) {
-    let buf = f.buffer_mut();
-    let mut offset = 0;
-
-    if use_brackets {
-        if let Some(cell) = buf.cell_mut((x, y)) { cell.set_symbol("["); }
-        offset = 1;
-    }
-
-    for (i, ch) in label.chars().enumerate() {
-        if let Some(cell) = buf.cell_mut((x + offset + i as u16, y)) {
-            cell.set_symbol(&ch.to_string());
-        }
-    }
-
-    if use_brackets {
-        if let Some(cell) = buf.cell_mut((x + offset + label.len() as u16, y)) {
-            cell.set_symbol("]");
         }
     }
 }
