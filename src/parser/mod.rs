@@ -1,2 +1,2 @@
 pub mod artist;
-pub mod library;
+pub mod main_tab;

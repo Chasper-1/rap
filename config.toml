@@ -8,3 +8,9 @@ year_length = 4
 
 [ui]
 max_comment_length = 60
+search_height = 4
+cava_height = 3
+step_offset = 2
+line_x = 0          # Позиция по горизонтали
+line_y = 35         # Позиция по вертикали (на какой высоте рисовать)
+line_width = 2      # Длина самой палки
