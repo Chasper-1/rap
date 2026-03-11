@@ -60,19 +60,26 @@ pub struct UiColors {
 impl Config {
     pub fn global() -> &'static Config {
         CONFIG.get_or_init(|| {
-            let content = fs::read_to_string("config.jsonc").unwrap_or_else(|_| String::new());
+            let content = fs::read_to_string("config.jsonc").unwrap_or_else(|_| {
+                // Если файла нет, логгер это запишет
+                crate::logger::log("CRITICAL: config.jsonc не найден"); 
+                String::new()
+            });
 
-            // Используем именно json5 для парсинга строки с комментариями
             match json5::from_str::<Config>(&content) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    let err_msg = format!("CONFIG ERROR (JSON5): {}\n", e);
-                    let _ = fs::write("rmpt.log", &err_msg);
+                    // Пишем ошибку парсинга в твой логгер
+                    let err_msg = format!("CONFIG ERROR (JSON5): {}", e);
+                    crate::logger::log(&err_msg); 
+                    
+                    let _ = CONFIG_ERROR.set(Some(err_msg));
                     Self::default_vals()
                 }
             }
         })
     }
+
 
 
     pub fn get_last_error() -> Option<String> {
