@@ -34,7 +34,7 @@ pub fn final_flush() {
     if let Ok(cache) = LOG_CACHE.lock() {
         if cache.is_empty() { return; }
 
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
         let mut log_path = cache_dir.clone();
         log_path.push(format!("rmpt_{}.log", timestamp));
 

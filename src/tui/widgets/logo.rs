@@ -9,8 +9,8 @@ use crate::config::config::Config;
 
 pub fn draw_rmpt_logo(f: &mut Frame, _area: Rect) {
     let conf = Config::global();
+    let [r, g, b] = conf.ui.colors.logo; // Разбираем массив из конфига
 
-    // Логотип остается как есть, ровно в 3 колонки
     let logo = "█▀█
 █▀▄
 
@@ -24,15 +24,13 @@ pub fn draw_rmpt_logo(f: &mut Frame, _area: Rect) {
  █ ";
 
     let paragraph = Paragraph::new(Text::from(logo))
-        .style(Style::default().fg(Color::Rgb(167, 192, 128)).bold());
+        .style(Style::default().fg(Color::Rgb(r, g, b)).bold());
 
-    // Задаем жесткий Rect. Никаких f.size() и динамики
-    // Это выключает лишние пересчеты и «растягивание» на всю строку
     let area = Rect {
         x: conf.ui.logo_x,
         y: conf.ui.logo_y,
-        width: 3,   // Жестко 3 символа
-        height: 11, // Жестко под высоту текста
+        width: 3,
+        height: 11,
     };
 
     f.render_widget(paragraph, area);
