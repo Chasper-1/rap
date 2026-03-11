@@ -33,7 +33,7 @@
       "search_label": [200, 200, 200],
       "regex_label": [200, 200, 200],
       "library_label": [200, 200, 200],
-      "border": [100, 100, 100]
+      "buttons": [167, 192, 128]
     }
   },
   "logging": {
