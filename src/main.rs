@@ -2,6 +2,7 @@ mod audio_engine;
 mod logger;
 mod config;
 mod parser;
+mod tui;
 
 use audio_engine::AudioEngine;
 use std::env;
@@ -48,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         terminal.draw(|f| {
             let size = f.area();
             // Твоя функция из parser/main_tab.rs
-            crate::parser::main_tab::draw_main_layout(f, size);
+            crate::tui::main_tab::draw_main_layout(f, size);
         })?;
 
         // Слушаем нажатия клавиш

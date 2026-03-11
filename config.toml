@@ -1,7 +1,5 @@
 [parser]
-# Символы, по которым режем строку
 separators = [",", ";", "/", "&"]
-# Слова, которые считаем за разделители (пока выкидываем, как ты и сказал)
 feat_keywords = ["feat.", "ft.", "feat", "ft", "with"]
 exceptions = ["MiyaGi & Эндшпиль", "AC/DC"]
 year_length = 4
@@ -10,7 +8,11 @@ year_length = 4
 max_comment_length = 60
 search_height = 4
 cava_height = 3
-step_offset = 2
-line_x = 0          # Позиция по горизонтали
+step_offset = 3
+line_x = 1          # Позиция по горизонтали
 line_y = 35         # Позиция по вертикали (на какой высоте рисовать)
 line_width = 2      # Длина самой палки
+search_box_x = 1
+search_box_y = 0
+search_box_width = 45
+search_box_height = 5
