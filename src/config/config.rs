@@ -41,6 +41,8 @@ pub struct UiConfig {
     pub library_y: u16,
     pub library_width: u16,
     pub library_height: u16,
+    pub logo_x: u16,
+    pub logo_y: u16,
 }
 
 impl Config {
@@ -69,9 +71,10 @@ impl Config {
             match toml::from_str::<Config>(&cleaned_content) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    let err_msg = format!("TOML ERROR: {}\nПроверь, все ли поля заполнены в [ui]!", e);
+                    let err_msg =
+                        format!("TOML ERROR: {}\nПроверь, все ли поля заполнены в [ui]!", e);
                     let _ = fs::write("rmpt.log", &err_msg);
-                    
+
                     // Сохраняем ошибку во второй OnceLock
                     let _ = CONFIG_ERROR.set(Some(err_msg));
 
@@ -109,6 +112,8 @@ impl Config {
                 library_y: 5,
                 library_width: 30,
                 library_height: 15,
+                logo_x: 1,
+                logo_y: 35,
             },
             logging: LoggingConfig { max_logs: 5 },
         }
