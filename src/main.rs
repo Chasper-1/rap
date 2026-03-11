@@ -1,82 +1,98 @@
 mod audio_engine;
-mod logger;
 mod config;
+mod logger;
 mod parser;
 mod tui;
 
 use audio_engine::AudioEngine;
-use std::env;
-use std::io;
-use std::time::Duration;
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::env;
+use std::io;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Паник-хендлер (по твоему плану)
+    std::panic::set_hook(Box::new(|info| {
+        crate::logger::log(&format!("CRITICAL PANIC: {}", info));
+        crate::logger::final_flush();
+    }));
+
+    // 2. Аргументы теперь опциональны
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.is_empty() {
-        eprintln!("ERROR: Usage: rmpt <path>");
-        return Ok(());
-    }
-    let path = args.join(" ");
+    let initial_path = if !args.is_empty() {
+        let path = args.join(" ");
+        if std::path::Path::new(&path).exists() {
+            Some(path)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("ERROR: Файл не найден: {}", path);
-        return Ok(());
-    }
-
-    // 1. Входим в режим TUI (Alternate Screen + Raw Mode)
+    // 3. Входим в TUI сразу
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 2. Запускаем движок
+    // 4. Инициализация движка (он в спячке, пока не позовем play)
     let engine = AudioEngine::new();
-    engine.play(&path).await;
 
-    // 3. Главный цикл отрисовки
+    // Если путь всё-таки передали и он валидный — запускаем
+    if let Some(path) = initial_path {
+        engine.play(&path).await;
+    }
+
+    let mut log_empty_sent = false;
+
+    // 5. Главный цикл
     loop {
-        // РИСУЕМ ТВОЮ СЕТКУ ИЗ ПОЛОСОК
         terminal.draw(|f| {
             let size = f.area();
-            // Твоя функция из parser/main_tab.rs
             crate::tui::main_tab::draw_main_layout(f, size);
         })?;
 
-        // Слушаем нажатия клавиш
-        // poll(0) позволяет циклу крутиться без задержек для плавности
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
+                // Выход на 'q'
                 if key.code == KeyCode::Char('q') {
                     break;
                 }
+
+                // Сюда потом добавим логику выбора файла из библиотеки и запуск через engine.play()
+            }
+            if engine.is_empty().await {
+                if !log_empty_sent {
+                    crate::logger::log("Audio engine is idle (queue empty)");
+                    log_empty_sent = true;
+                }
+            } else {
+                log_empty_sent = false; // сбрасываем, если что-то заиграло
             }
         }
 
-        // Если трек закончился — выходим
-        if engine.is_empty().await {
-            break;
-        }
+        // Больше не выходим автоматически, если движок пуст.
+        // Теперь мы в плеере, даже если тишина.
     }
+
+    if let Some(err) = crate::config::config::Config::get_last_error() {
+        println!("\x1b[31;1m[!] Ошибки конфига при запуске:\x1b[0m");
+        println!("\x1b[33m{}\x1b[0m", err);
+    }
+
+    // 6. Финал
     logger::final_flush();
-    
-    // 4. Восстанавливаем терминал в исходное состояние
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    
     Ok(())
 }

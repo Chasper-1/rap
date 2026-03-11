@@ -1,6 +1,7 @@
 use crate::config::config::Config;
 use ratatui::{Frame,layout::{Constraint, Direction, Layout, Rect},widgets::{Block, Borders},};
 use crate::tui::widgets::search;
+use crate::tui::widgets::library;
 
 pub fn draw_main_layout(f: &mut Frame, area: Rect) {
     let conf = Config::global();
@@ -78,4 +79,5 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect) {
     }
     
     search::draw_search_widget(f, top_parts[0]);
+    library::draw_library_widget(f, top_parts[1]);
 }
