@@ -17,10 +17,33 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Сначала инициализируем конфиг и проверяем его на вшивость
+    let _ = crate::config::config::Config::global();
+
+    if let Some(err) = crate::config::config::Config::get_last_error() {
+        // Если конфиг битый — СРАЗУ ГОВОРИМ ОБ ЭТОМ И ВЫХОДИМ
+        // Не заходим в TUI, не портим терминал
+        eprintln!("\x1b[31;1m[FATAL] Ошибка в конфигурации:\x1b[0m");
+        eprintln!("\x1b[33m{}\x1b[0m", err);
+
+        // Пишем в логгер и сбрасываем на диск перед выходом
+        crate::logger::log(&format!("FATAL: Config error: {}", err));
+        crate::logger::final_flush().await;
+
+        std::process::exit(1);
+    }
+
     // 1. Паник-хендлер (по твоему плану)
     std::panic::set_hook(Box::new(|info| {
         crate::logger::log(&format!("CRITICAL PANIC: {}", info));
-        crate::logger::final_flush();
+        
+        // Создаем одноразовый экзекутор, чтобы выполнить асинхронный flush в синхронном месте
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+            
+        rt.block_on(crate::logger::final_flush());
     }));
 
     // 2. Аргументы теперь опциональны
@@ -89,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 6. Финал
-    logger::final_flush();
+    logger::final_flush().await;
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
