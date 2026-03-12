@@ -9,6 +9,7 @@ use crate::logger;
 // rodio 0.22.2
 use rodio::{Decoder, Player, Source};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
+use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
 // ИСПРАВЛЕНИЕ: Импортируем строгие типы SampleRate и Channels для opus-codec 0.1.2
 use opus_codec::{Decoder as OpusDecoder, SampleRate, Channels}; 
@@ -92,11 +93,43 @@ pub struct AudioEngine {
 impl AudioEngine {
     pub fn new() -> Self {
         logger::log("System: Init Audio Engine...");
-        let mut stream = DeviceSinkBuilder::open_default_sink()
+    
+        // Получаем дефолтное устройство через cpal (бэкенд rodio)
+        let device = rodio::cpal::default_host()
+            .default_output_device()
             .expect("Ошибка: Устройство вывода не найдено.");
+    
+        // Достаем нативную частоту этого устройства
+        let native_sample_rate = device
+            .default_output_config()
+            .map(|config| config.sample_rate()) // Это то, что система ХОЧЕТ
+            .unwrap_or(44100);
+        
+        // 2. А теперь ПРОВЕРЯЕМ, нет ли у железки родного режима на 48000, 
+        // если система тупит и предлагает 44100.
+        let final_rate = device
+            .supported_output_configs()
+            .expect("Ошибка: Не удалось получить список конфигов.")
+            .filter(|c| {
+                // Проверяем, попадает ли 48000 в диапазон того, что карта РЕАЛЬНО умеет
+                c.min_sample_rate() <= 48000 && c.max_sample_rate() >= 48000
+            })
+            .map(|_| 48000) // Если умеет 48к, то это наш приоритет для PipeWire
+            .next()
+            .unwrap_or(native_sample_rate);
+        
+        logger::log(&format!("System: Switching to native {} Hz", native_sample_rate));
+        
+        // 2. Теперь собираем поток с этой частотой
+        let mut stream = DeviceSinkBuilder::from_device(device)
+            .expect("Ошибка: Не удалось создать билдер.")
+            .with_sample_rate(std::num::NonZeroU32::new(final_rate).unwrap())
+            .open_sink_or_fallback()
+            .expect("Ошибка: Не удалось запустить аудиопоток.");
+    
         stream.log_on_drop(false);
         let player = Player::connect_new(stream.mixer());
-
+    
         Self {
             _stream: stream,
             player: Arc::new(Mutex::new(player)),
