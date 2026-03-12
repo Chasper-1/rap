@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 // rodio 0.22.2
-use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::cpal::traits::{HostTrait};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use rodio::{Decoder, Player, Source};
 
@@ -118,22 +118,7 @@ impl AudioEngine {
             .expect("Ошибка: Устройство вывода не найдено.");
 
         // Достаем нативную частоту этого устройства
-        let native_sample_rate = device
-            .default_output_config()
-            .map(|config| config.sample_rate()) // Это то, что система ХОЧЕТ
-            .unwrap_or(44100);
-
-        // 2. А теперь ПРОВЕРЯЕМ, нет ли у железки родного режима на 48000,
-        let final_rate = device
-            .supported_output_configs()
-            .expect("Ошибка: Не удалось получить список конфигов.")
-            .filter(|c| {
-                // Проверяем, попадает ли 48000 в диапазон того, что карта РЕАЛЬНО умеет
-                c.min_sample_rate() <= 48000 && c.max_sample_rate() >= 48000
-            })
-            .map(|_| 48000) // Если умеет 48к, то это наш приоритет для PipeWire
-            .next()
-            .unwrap_or(native_sample_rate);
+        let final_rate = 48_000;
 
         logger::log(&format!(
             "System: Switching to native {} Hz",
