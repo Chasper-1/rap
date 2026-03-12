@@ -10,6 +10,17 @@ pub struct Config {
     pub parser: ParserConfig,
     pub ui: UiConfig,
     pub logging: LoggingConfig,
+    pub input: InputConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct InputConfig {
+    pub quit: String,
+    pub toggle_pause: String,
+    pub vol_up: String,
+    pub vol_down: String,
+    pub forward: String,
+    pub backward: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -62,7 +73,7 @@ impl Config {
         CONFIG.get_or_init(|| {
             let content = fs::read_to_string("config.jsonc").unwrap_or_else(|_| {
                 // Если файла нет, логгер это запишет
-                crate::logger::log("CRITICAL: config.jsonc не найден"); 
+                crate::logger::log("CRITICAL: config.jsonc не найден");
                 String::new()
             });
 
@@ -71,16 +82,14 @@ impl Config {
                 Err(e) => {
                     // Пишем ошибку парсинга в твой логгер
                     let err_msg = format!("CONFIG ERROR (JSON5): {}", e);
-                    crate::logger::log(&err_msg); 
-                    
+                    crate::logger::log(&err_msg);
+
                     let _ = CONFIG_ERROR.set(Some(err_msg));
                     Self::default_vals()
                 }
             }
         })
     }
-
-
 
     pub fn get_last_error() -> Option<String> {
         CONFIG_ERROR.get().cloned().flatten()
@@ -118,6 +127,14 @@ impl Config {
                     library_label: [200, 200, 200],
                     buttons: [167, 192, 128],
                 },
+            },
+            input: InputConfig {
+                quit: "q | Esc".into(),
+                toggle_pause: "Space".into(),
+                vol_up: "= | +".into(),
+                vol_down: "- | _".into(),
+                forward: "Right | f".into(),
+                backward: "Left | b".into(),
             },
             logging: LoggingConfig { max_logs: 5 },
         }

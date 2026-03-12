@@ -3,10 +3,11 @@ mod config;
 mod logger;
 mod parser;
 mod tui;
+mod input;
 
 use audio_engine::AudioEngine;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -35,15 +36,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Паник-хендлер (по твоему плану)
     std::panic::set_hook(Box::new(|info| {
+        // Сначала ПРИНУДИТЕЛЬНО возвращаем терминал в нормальный режим
+        // Делаем это через стандартный вывод, игнорируя ошибки
+        let _ = crossterm::terminal::disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        let _ = crossterm::execute!(stdout, crossterm::terminal::LeaveAlternateScreen, crossterm::cursor::Show);
+    
+        // Теперь пишем в логгер, что именно случилось
         crate::logger::log(&format!("CRITICAL PANIC: {}", info));
         
-        // Создаем одноразовый экзекутор, чтобы выполнить асинхронный flush в синхронном месте
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-            
-        rt.block_on(crate::logger::final_flush());
+        // Сбрасываем логи на диск (через хендл текущего рантайма, как мы делали)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.block_on(crate::logger::final_flush());
+        }
+    
+        // Печатаем саму ошибку в чистый терминал, чтобы ты её видел
+        eprintln!("\n\x1b[31;1m[FATAL ERROR]:\x1b[0m {}\n", info);
     }));
 
     // 2. Аргументы теперь опциональны
@@ -78,33 +86,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. Главный цикл
     loop {
-        terminal.draw(|f| {
-            let size = f.area();
-            crate::tui::main_tab::draw_main_layout(f, size);
-        })?;
-
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                // Выход на 'q'
-                if key.code == KeyCode::Char('q') {
-                    break;
+            terminal.draw(|f| {
+                let size = f.area();
+                crate::tui::main_tab::draw_main_layout(f, size);
+            })?;
+    
+            if event::poll(Duration::from_millis(50))? {
+                if let Event::Key(key) = event::read()? {
+                    // Вызываем процессор: он сам лезет в конфиг, дёргает методы движка 
+                    // и говорит нам, когда пора выходить (если нажата кнопка выхода)
+                    if !crate::input::handle_input(&engine, key).await {
+                        break;
+                    }
                 }
-
-                // Сюда потом добавим логику выбора файла из библиотеки и запуск через engine.play()
-            }
-            if engine.is_empty().await {
-                if !log_empty_sent {
-                    crate::logger::log("Audio engine is idle (queue empty)");
-                    log_empty_sent = true;
+    
+                if engine.is_empty().await {
+                    if !log_empty_sent {
+                        crate::logger::log("Audio engine is idle (queue empty)");
+                        log_empty_sent = true;
+                    }
+                } else {
+                    log_empty_sent = false; 
                 }
-            } else {
-                log_empty_sent = false; // сбрасываем, если что-то заиграло
             }
         }
-
-        // Больше не выходим автоматически, если движок пуст.
-        // Теперь мы в плеере, даже если тишина.
-    }
 
     if let Some(err) = crate::config::config::Config::get_last_error() {
         println!("\x1b[31;1m[!] Ошибки конфига при запуске:\x1b[0m");

@@ -36,6 +36,14 @@
       "buttons": [167, 192, 128]
     }
   },
+  "input":{
+    "quit": "q | Esc",
+    "toggle_pause": "Space",
+    "vol_up": "= | +",
+    "vol_down": "- | _",
+    "forward": "Right",
+    "backward": "Left",
+  },
   "logging": {
     "max_logs": 5
   }
