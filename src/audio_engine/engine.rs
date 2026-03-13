@@ -125,12 +125,14 @@ impl AudioEngine {
         self.player.lock().await.play();
     }
     pub async fn set_volume(&self, vol: f32) {
-        let calibrated_vol = vol.clamp(0.0, 1.0).powi(2);
+        let v = vol.clamp(0.0, 1.0);
+        let calibrated_vol = 0.1 * v + 0.9 * v.powi(2);
+        
         self.player.lock().await.set_volume(calibrated_vol);
     }
     pub async fn get_volume(&self) -> f32 {
-        let internal_vol = self.player.lock().await.volume();
-        internal_vol.sqrt()
+        let v = self.player.lock().await.volume();
+        v
     }
     pub async fn get_current_pos(&self) -> u64 {
         self.player.lock().await.get_pos().as_secs()
