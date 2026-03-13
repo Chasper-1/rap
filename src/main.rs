@@ -1,9 +1,9 @@
 mod audio_engine;
 mod config;
+mod input;
 mod logger;
 mod parser;
 mod tui;
-mod input;
 
 use crate::audio_engine::engine::AudioEngine;
 use crossterm::{
@@ -14,7 +14,6 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::env;
 use std::io;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,11 +38,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 1. Восстанавливаем терминал сразу
         let _ = crossterm::terminal::disable_raw_mode();
         let mut stdout = std::io::stdout();
-        let _ = crossterm::execute!(stdout, crossterm::terminal::LeaveAlternateScreen, crossterm::cursor::Show);
-    
+        let _ = crossterm::execute!(
+            stdout,
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
+
         // 2. Печатаем в консоль
         eprintln!("\n\x1b[31;1m[FATAL ERROR]:\x1b[0m {}\n", info);
-    
+
         // 3. Сбрасываем кэш СИНХРОННО
         crate::logger::emergency_flush(info);
     }));
@@ -80,30 +83,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. Главный цикл
     loop {
-            terminal.draw(|f| {
-                let size = f.area();
-                crate::tui::main_tab::draw_main_layout(f, size, &engine);
-            })?;
-    
-            if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    // Вызываем процессор: он сам лезет в конфиг, дёргает методы движка 
-                    // и говорит нам, когда пора выходить (если нажата кнопка выхода)
-                    if !crate::input::handle_input(&engine, key).await {
-                        break;
-                    }
-                }
-    
-                if engine.is_empty().await {
-                    if !log_empty_sent {
-                        crate::logger::log("Audio engine is idle (queue empty)");
-                        log_empty_sent = true;
-                    }
-                } else {
-                    log_empty_sent = false; 
+        let conf = crate::config::config::Config::global();
+        let tick_rate = std::time::Duration::from_millis(conf.ui.cava_update_ms);
+
+        terminal.draw(|f| {
+            let size = f.area();
+            crate::tui::main_tab::draw_main_layout(f, size, &engine);
+        })?;
+
+        if event::poll(tick_rate)? {
+            if let Event::Key(key) = event::read()? {
+                if !crate::input::handle_input(&engine, key).await {
+                    break;
                 }
             }
+
+            if engine.is_empty().await {
+                if !log_empty_sent {
+                    crate::logger::log("Audio engine is idle (queue empty)");
+                    log_empty_sent = true;
+                }
+            } else {
+                log_empty_sent = false;
+            }
         }
+    }
 
     if let Some(err) = crate::config::config::Config::get_last_error() {
         println!("\x1b[31;1m[!] Ошибки конфига при запуске:\x1b[0m");

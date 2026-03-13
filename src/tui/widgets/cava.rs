@@ -11,125 +11,90 @@ static PREV_FREQS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
 
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
-    let ui = &conf.ui; // Для краткости
+    let ui = &conf.ui;
 
-    if area.height < 3 {
-        return;
-    }
+    if area.height < 2 || raw_frequencies.is_empty() { return; }
 
-    let inner_area = area.inner(Margin {
-        vertical: 1,
-        horizontal: 1,
-    });
+    let inner_area = area.inner(Margin { vertical: 1, horizontal: 1 });
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
-    let mut prev_lock = PREV_FREQS
-        .get_or_init(|| Mutex::new(vec![0.0; 512]))
-        .lock()
-        .unwrap();
+    let mut prev_lock = PREV_FREQS.get_or_init(|| Mutex::new(vec![0.0; 512])).lock().unwrap();
     if prev_lock.len() != raw_frequencies.len() {
         *prev_lock = vec![0.0; raw_frequencies.len()];
     }
 
-    // 1. УЛУЧШЕННАЯ ОБРАБОТКА (как в оригинальной CAVA)
+    // Считаем среднюю энергию кадра для детектора тишины
+    let avg_energy: f32 = raw_frequencies.iter().sum::<f32>() / raw_frequencies.len() as f32;
+
     let frequencies: Vec<f32> = raw_frequencies
         .iter()
         .enumerate()
         .map(|(i, &raw_val)| {
             let prev_val = prev_lock[i];
 
-            // 1. ЖЕСТКИЙ ПРЕРЫВАТЕЛЬ (KILL SWITCH)
-            // Если сигнал ниже порога (шум), мы ВООБЩЕ ничего не считаем.
-            // Просто берем старое значение и умножаем на скорость падения.
-            if raw_val < ui.cava_noise_gate {
-                let mut dropped = prev_val * ui.cava_fall_speed;
-
-                // Если упали совсем низко, рисуем фундамент и сбрасываем в Lock
-                if dropped < 0.05 {
-                    dropped = 0.05;
-                }
-
+            // Если общая энергия кадра ниже порога — принудительно падаем в ноль
+            if avg_energy < ui.cava_noise_gate {
+                let dropped = (prev_val * ui.cava_fall_speed).max(0.0);
                 prev_lock[i] = dropped;
                 return dropped;
             }
 
-            // 2. РАСЧЕТ ДИНАМИКИ (Только если есть звук)
-            // Используем экспоненту, чтобы "просадить" слабые сигналы вниз
-            let mut val = raw_val.powf(ui.cava_exponent) * ui.cava_sensitivity;
-
-            // Поднимаем высокие частоты (EQ)
+            // ВЫРАВНИВАНИЕ ЯМЫ (Bell Curve)
             let pos = i as f32 / raw_frequencies.len() as f32;
-            let weight = 0.7 + (pos * 1.8);
-            val *= weight;
+            // Усиливаем центр (pos 0.5), игнорируя края (бас и вч)
+            let bell = (-(pos - 0.5).powi(2) * 8.0).exp(); 
+            let total_boost = 1.0 + (ui.cava_tilt * bell);
 
-            // 3. ИНЕРЦИЯ
-            let final_val = if val > prev_val {
-                // Взлет: учитываем attack
-                prev_val + (val - prev_val) * ui.cava_attack
+            // Расчет целевой высоты
+            let target = (raw_val * ui.cava_sensitivity * total_boost).powf(ui.cava_exponent);
+
+            // Плавность взлета и падения
+            let final_val = if target > prev_val {
+                prev_val + (target - prev_val) * ui.cava_attack
             } else {
-                // Падение: по конфигу
-                (prev_val * ui.cava_fall_speed).max(0.05)
+                (prev_val * ui.cava_fall_speed).max(0.0)
             };
 
-            let out = final_val.min(1.0);
+            let out = final_val.clamp(0.0, 1.0);
             prev_lock[i] = out;
             out
         })
         .collect();
 
+    // Отрисовка
     let symbols = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let mut cava_content = String::with_capacity(width * height * 4);
 
     for h_idx in (0..height).rev() {
         let mut line = String::with_capacity(width * 4);
         let mut i = 0;
-
         while i < width {
-            let data_idx = (i * frequencies.len()) / width;
-            let mut val = *frequencies.get(data_idx).unwrap_or(&0.01);
-
-            // Всегда рисуем хотя бы минимальную полоску на нижней строке
-            if h_idx == 0 && val < 0.05 {
-                val = 0.05;
-            }
+            let start = (i * frequencies.len()) / width;
+            let end = ((i + 1) * frequencies.len()) / width;
+            let chunk = &frequencies[start..end.max(start + 1)];
+            let val = chunk.iter().sum::<f32>() / chunk.len() as f32;
 
             let level_min = h_idx as f32 / height as f32;
             let level_max = (h_idx + 1) as f32 / height as f32;
 
-            let char_idx = if val >= level_max {
-                7
-            } else if val > level_min {
-                let internal_factor = (val - level_min) / (level_max - level_min);
-                ((internal_factor * 8.0) as usize).min(7)
-            } else {
-                0
-            };
+            let char_idx = if val >= level_max { 7 }
+            else if val > level_min {
+                (((val - level_min) / (level_max - level_min)) * 8.0) as usize
+            } else { 0 };
 
-            let symbol = symbols[char_idx];
-
-            // ОПТИМИЗАЦИЯ: Если это пустая строка (выше уровня звука),
-            // мы могли бы вообще не рисовать, но для Paragraph нам нужны пробелы
-            line.push_str(symbol);
-            if i + 1 < width {
-                line.push_str(symbol);
-            }
-            if i + 2 < width {
-                line.push(' ');
-            }
-
+            let sym = symbols[char_idx.min(7)];
+            line.push_str(sym);
+            if i + 1 < width { line.push_str(sym); }
+            if i + 2 < width { line.push(' '); }
             i += 3;
         }
-
         cava_content.push_str(&line);
-        if h_idx > 0 {
-            cava_content.push('\n');
-        }
+        if h_idx > 0 { cava_content.push('\n'); }
     }
 
-    let [r, g, b] = conf.ui.colors.buttons;
     f.render_widget(
-        Paragraph::new(cava_content).style(Style::default().fg(Color::Rgb(r, g, b))),
+        Paragraph::new(cava_content).style(Style::default().fg(Color::Rgb(ui.colors.buttons[0], ui.colors.buttons[1], ui.colors.buttons[2]))),
         inner_area,
     );
 }

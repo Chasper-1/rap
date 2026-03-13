@@ -6,14 +6,17 @@
     "year_length": 4,
   },
   "ui": {
+    "cava_height": 5, // нижний бар
+    "cava_fall_speed": 0.88,
+    "cava_exponent": 1.5,
+    "cava_sensitivity": 0.8,
+    "cava_noise_gate": 0.05,
+    "cava_attack": 0.8,
+    "cava_tilt": 1.5,
+    "cava_update_ms": 30,
+    
     "max_comment_length": 60,
     "search_height": 4, // количество строк от края верхнего.
-    "cava_height": 5, // нижний бар
-    "cava_fall_speed": 0.85,
-    "cava_exponent": 1.2,
-    "cava_sensitivity": 1.0,
-    "cava_noise_gate": 0.1,
-    "cava_attack": 1.0,
     "step_offset": 3, // количество строк под вырез левый.
 
     "line_x": 1, // Позиция по горизонтали
