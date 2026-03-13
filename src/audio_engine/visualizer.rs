@@ -61,7 +61,9 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
         let mut prev_freqs = vec![0.0; 128];
 
         loop {
-            // Ждем данные с тайм-аутом 50мс
+            // Берем твой родной fall_speed из конфига
+            let fall_speed = crate::config::config::Config::global().ui.cava_fall_speed;
+
             match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
                 Ok(Some(sample)) => {
                     input_buffer.push(sample);
@@ -72,7 +74,8 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
 
                         if fft.process(&mut indata, &mut out_spectrum).is_ok() {
                             let mut current_freqs = vec![0.0; 128];
-                            let bin_per_band = (fft_size / 2) / 128;
+                            let useful_bins = fft_size / 4; // Ограничение ~12кГц
+                            let bin_per_band = (useful_bins / 128).max(1);
 
                             for i in 0..128 {
                                 let mut amp = 0.0;
@@ -84,11 +87,13 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 }
                                 amp /= bin_per_band as f32;
 
-                                let mut val = (amp * 15.0).log10().max(0.0) / 2.5;
-                                // Плавное падение
-                                val = val.max(prev_freqs[i] * 0.88);
+                                let mut val = (amp * 25.0).log10().max(0.0) / 2.2;
+                                
+                                // Падение во время игры
+                                val = val.max(prev_freqs[i] * fall_speed);
                                 current_freqs[i] = val.min(1.0);
                             }
+
                             prev_freqs = current_freqs.clone();
                             if let Ok(mut out) = output.try_lock() {
                                 *out = current_freqs;
@@ -97,17 +102,18 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                         input_buffer.clear();
                     }
                 }
-                Ok(None) => break, // Канал закрыт (плеер убит)
+                Ok(None) => break, 
                 Err(_) => {
-                    // ТАЙМ-АУТ: Данных нет (пауза или стоп)
-                    // Плавно гасим значения, чтобы CAVA не застывала
+                    // ТАЙМ-АУТ (ПАУЗА) — используем ту же скорость падения
                     let mut current_freqs = vec![0.0; 128];
                     let mut has_energy = false;
 
                     for i in 0..128 {
-                        current_freqs[i] = prev_freqs[i] * 0.80; // Быстрое затухание
-                        if current_freqs[i] > 0.01 {
+                        current_freqs[i] = prev_freqs[i] * fall_speed;
+                        if current_freqs[i] > 0.001 {
                             has_energy = true;
+                        } else {
+                            current_freqs[i] = 0.0;
                         }
                     }
 
@@ -116,10 +122,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                         *out = current_freqs;
                     }
 
-                    // Очищаем старый буфер, чтобы при возобновлении не было рывка
                     input_buffer.clear();
-
-                    // Если всё уже в нуле, не насилуем проц, ждем дольше
                     if !has_energy {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
