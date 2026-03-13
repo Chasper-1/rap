@@ -8,12 +8,12 @@
   "ui": {
     "max_comment_length": 60,
     "search_height": 4, // количество строк от края верхнего.
-    "cava_height": 4, // нижний бар
+    "cava_height": 5, // нижний бар
     "cava_fall_speed": 0.92,
     "step_offset": 3, // количество строк под вырез левый.
 
     "line_x": 1, // Позиция по горизонтали
-    "line_y": 27, // Позиция по вертикали (на какой высоте рисовать)
+    "line_y": 26, // Позиция по вертикали (на какой высоте рисовать)
     "line_width": 2, // Длина самой палки
 
     "search_box_x": 1,
@@ -24,10 +24,10 @@
     "library_x": 4,
     "library_y": 4,
     "library_width": 42,
-    "library_height": 35,
+    "library_height": 34,
 
     "logo_x": 0,
-    "logo_y": 28,
+    "logo_y": 27,
 
     "colors": {
       "logo": [167, 192, 128],
