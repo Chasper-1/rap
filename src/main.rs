@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // 4. Инициализация движка (он в спячке, пока не позовем play)
-    let engine = AudioEngine::new();
+    let (engine, mut rx) = AudioEngine::new();
 
     // Если путь всё-таки передали и он валидный — запускаем
     if let Some(path) = initial_path {
