@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders},
     style::Style,
 };
-use crate::tui::widgets::{search, library, logo};
+use crate::tui::widgets::{search, library, logo, cava};
 
 // Теперь передаем сюда состояние, которое Tokio обновляет в фоне
 // (AppState создадим позже, пока просто заложим логику)
@@ -86,4 +86,5 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect) {
     search::draw_search_widget(f, top_parts[0]);
     library::draw_library_widget(f, top_parts[1]); 
     logo::draw_rmpt_logo(f, top_parts[1]);
+    cava::draw_cava_widget(f, root[1]);
 }
