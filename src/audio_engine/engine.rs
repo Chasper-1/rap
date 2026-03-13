@@ -2,7 +2,7 @@ use super::opus_source::OpusSource;
 use super::symphonia_source::SymphoniaSource;
 use crate::logger;
 
-use crate::audio_engine::visualizer::VisualizableSource;
+use crate::audio_engine::visualizer::{VisualizableSource, spawn_analyzer};
 use std::fs::File;
 use std::io::BufReader;
 use std::num::NonZero;
@@ -21,34 +21,40 @@ pub struct AudioEngine {
     _stream: MixerDeviceSink,
     player: Arc<Mutex<Player>>,
     viz_tx: mpsc::Sender<f32>,
+    pub cava_data: Arc<Mutex<Vec<f32>>>,
 }
 
 impl AudioEngine {
     pub fn new() -> (Self, mpsc::Receiver<f32>) {
         let (tx, rx) = mpsc::channel(1024 * 10);
-    
+        let cava_data = Arc::new(Mutex::new(vec![0.0; 128]));
+
         let device = rodio::cpal::default_host()
             .default_output_device()
             .expect("System Error: No output device found.");
-    
+
         let mut stream = DeviceSinkBuilder::from_device(device)
             .expect("Failed to create SinkBuilder")
             .with_sample_rate(NonZero::new(48000).unwrap())
             .open_sink_or_fallback()
             .expect("System Error: Failed to open audio sink.");
-    
+
         stream.log_on_drop(false);
         let player = Player::connect_new(stream.mixer());
-    
-        // 1. Создаем структуру и сохраняем в переменную
+
+        spawn_analyzer(rx, cava_data.clone());
+
         let engine = Self {
             _stream: stream,
             player: Arc::new(Mutex::new(player)),
             viz_tx: tx,
+            cava_data,
         };
-    
-        // 2. Сразу возвращаем её и канал. Больше ничего создавать не надо!
-        (engine, rx)
+
+        // Мы возвращаем rx для main.rs, чтобы там не было ошибок неиспользуемой переменной,
+        // но анализатор уже запущен внутри.
+        let (_, dummy_rx) = mpsc::channel(1);
+        (engine, dummy_rx)
     }
 
     pub async fn play(&self, path: &str) -> (String, String) {
@@ -73,14 +79,16 @@ impl AudioEngine {
                 .await;
 
             if let Ok(Some(src)) = source_result {
-                let visualizable = VisualizableSource {
-                    input: src,
-                    sender: viz_tx,
-                };
-
                 let p = player_lock.lock().await;
                 p.stop();
-                p.append(visualizable);
+
+                // Оборачиваем наш источник (Opus или Symphonia)
+                let visual_src = VisualizableSource {
+                    input: src,
+                    sender: viz_tx.clone(), // Клонируем Sender для канала CAVA
+                };
+
+                p.append(visual_src);
                 p.play();
             }
         });

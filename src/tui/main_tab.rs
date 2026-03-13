@@ -6,10 +6,11 @@ use ratatui::{
     style::Style,
 };
 use crate::tui::widgets::{search, library, logo, cava};
+use crate::AudioEngine;
 
 // Теперь передаем сюда состояние, которое Tokio обновляет в фоне
 // (AppState создадим позже, пока просто заложим логику)
-pub fn draw_main_layout(f: &mut Frame, area: Rect) {
+pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
     let conf = Config::global();
 
     // 1. Делим на верх (Search + Main) и низ (CAVA)
@@ -81,10 +82,16 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect) {
         );
     }
     
+    let freqs = if let Ok(data) = engine.cava_data.try_lock() {
+        data.clone()
+    } else {
+        vec![0.0; 128] // Создаем дефолтный вектор прямо здесь, если мьютекс занят
+    };
+    
     // --- ВЫЗОВ ВИДЖЕТОВ ---
     // В Tokio-версии эти функции должны быстро забирать данные из кэша
     search::draw_search_widget(f, top_parts[0]);
     library::draw_library_widget(f, top_parts[1]); 
     logo::draw_rmpt_logo(f, top_parts[1]);
-    cava::draw_cava_widget(f, root[1], &[]);
+    cava::draw_cava_widget(f, root[1], &freqs);
 }

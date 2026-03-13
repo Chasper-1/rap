@@ -5,7 +5,7 @@ mod parser;
 mod tui;
 mod input;
 
-use audio_engine::AudioEngine;
+use crate::audio_engine::engine::AudioEngine;
 use crossterm::{
     event::{self, Event},
     execute,
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // 4. Инициализация движка (он в спячке, пока не позовем play)
-    let (engine, mut rx) = AudioEngine::new();
+    let (engine, _rx) = AudioEngine::new();
 
     // Если путь всё-таки передали и он валидный — запускаем
     if let Some(path) = initial_path {
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
             terminal.draw(|f| {
                 let size = f.area();
-                crate::tui::main_tab::draw_main_layout(f, size);
+                crate::tui::main_tab::draw_main_layout(f, size, &engine);
             })?;
     
             if event::poll(Duration::from_millis(50))? {
