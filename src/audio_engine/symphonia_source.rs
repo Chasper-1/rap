@@ -34,7 +34,7 @@ impl SymphoniaSource {
                 }
             };
         
-        let reader = probed.format; // Убрали mut, так как поиск трека его не требует
+        let reader = probed.format;
         let track = reader.tracks().iter()
             .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)?;
         
@@ -57,7 +57,7 @@ impl SymphoniaSource {
         Some(Self {
             reader,
             decoder,
-            sample_buffer: Vec::new(),
+            sample_buffer: Vec::with_capacity(9600), // Сразу выделим немного, чтоб не прыгало
             buffer_pos: 0,
             sample_rate,
             channels,
@@ -65,39 +65,34 @@ impl SymphoniaSource {
         })
     }
 
-    // Изменили на статическую логику, чтобы не конфликтовать с заимствованием self
-    fn process_decoded(decoded: AudioBufferRef<'_>, channels: u16) -> Vec<f32> {
-        let mut out = Vec::new();
+    fn fill_buffer(decoded: AudioBufferRef<'_>, channels: u16, out: &mut Vec<f32>) {
+        out.clear(); 
         match decoded {
             AudioBufferRef::F32(buf) => {
-                let num_frames = buf.frames();
-                for i in 0..num_frames {
+                for i in 0..buf.frames() {
                     for ch in 0..channels as usize {
                         out.push(buf.chan(ch)[i]);
                     }
                 }
             }
             AudioBufferRef::S16(buf) => {
-                let num_frames = buf.frames();
-                for i in 0..num_frames {
+                for i in 0..buf.frames() {
                     for ch in 0..channels as usize {
                         out.push(buf.chan(ch)[i] as f32 / 32768.0);
                     }
                 }
             }
             AudioBufferRef::S32(buf) => {
-                let num_frames = buf.frames();
-                for i in 0..num_frames {
+                for i in 0..buf.frames() {
                     for ch in 0..channels as usize {
                         out.push(buf.chan(ch)[i] as f32 / 2147483648.0);
                     }
                 }
             }
             _ => {
-                logger::log("SYMPHONIA: Unsupported format encountered during playback");
+                logger::log("SYMPHONIA: Unsupported format during playback");
             }
         }
-        out
     }
 }
 
@@ -115,8 +110,7 @@ impl Iterator for SymphoniaSource {
                 
                 match self.decoder.decode(&packet) {
                     Ok(decoded) => {
-                        // Теперь вызываем метод без двойного мутабельного заимствования
-                        self.sample_buffer = Self::process_decoded(decoded, self.channels);
+                        Self::fill_buffer(decoded, self.channels, &mut self.sample_buffer);
                         self.buffer_pos = 0;
                         if !self.sample_buffer.is_empty() { break; }
                     }
@@ -144,7 +138,6 @@ impl Source for SymphoniaSource {
             time: Time::from(pos.as_secs_f64()), 
             track_id: Some(self.track_id) 
         };
-        // Для seek мутабельность ридера все же нужна
         if self.reader.seek(SeekMode::Accurate, seek_to).is_ok() {
             self.sample_buffer.clear();
             self.buffer_pos = 0;
