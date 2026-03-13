@@ -13,9 +13,14 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
     let fall_speed = conf.ui.cava_fall_speed.clamp(0.0, 1.0);
 
-    if area.height < 3 { return; }
+    if area.height < 3 {
+        return;
+    }
 
-    let inner_area = area.inner(Margin { vertical: 1, horizontal: 1 });
+    let inner_area = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
@@ -33,20 +38,29 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
         .iter()
         .enumerate()
         .map(|(i, &current_val)| {
-            // Весовой коэффициент: чем выше частота (i), тем сильнее её поднимаем
-            // Это исправляет "проваленную середину"
-            let weight = 1.0 + (i as f32).powf(1.5) * 0.05; 
-            let mut val = current_val * weight * 2.5; // Усиливаем общий сигнал
-            
-            // Ограничиваем сверху
-            if val > 1.0 { val = 1.0; }
-            
-            // Noise gate + минимальный порог (чтобы всегда был виден "фундамент")
-            if val < 0.02 { val = 0.01; } 
+            // Применяем корень, чтобы "сплющить" динамический диапазон
+            // (тихие звуки станут видны, громкие перестанут биться в потолок)
+            let mut val = current_val.sqrt() * 1.2;
+
+            // Частотное выравнивание (Bell-curve)
+            // Придавливаем края (бас и ультразвук), акцентируем середину
+            let len = raw_frequencies.len() as f32;
+            let pos = i as f32 / len;
+            let bell_weight = 0.5 + 0.5 * (-(pos - 0.5).powi(2) * 4.0).exp();
+            val *= bell_weight;
+
+            // Noise gate + минимальный порог
+            if val < 0.02 {
+                val = 0.01;
+            }
 
             let prev_val = prev_lock[i];
-            let new_val = if val > prev_val { val } else { prev_val * fall_speed };
-            
+            let new_val = if val > prev_val {
+                val
+            } else {
+                prev_val * fall_speed
+            };
+
             prev_lock[i] = new_val;
             new_val
         })
@@ -58,13 +72,15 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     for h_idx in (0..height).rev() {
         let mut line = String::with_capacity(width * 4);
         let mut i = 0;
-        
+
         while i < width {
             let data_idx = (i * frequencies.len()) / width;
             let mut val = *frequencies.get(data_idx).unwrap_or(&0.01);
 
             // Всегда рисуем хотя бы минимальную полоску на нижней строке
-            if h_idx == 0 && val < 0.05 { val = 0.05; }
+            if h_idx == 0 && val < 0.05 {
+                val = 0.05;
+            }
 
             let level_min = h_idx as f32 / height as f32;
             let level_max = (h_idx + 1) as f32 / height as f32;
@@ -79,18 +95,24 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
             };
 
             let symbol = symbols[char_idx];
-            
-            // ОПТИМИЗАЦИЯ: Если это пустая строка (выше уровня звука), 
+
+            // ОПТИМИЗАЦИЯ: Если это пустая строка (выше уровня звука),
             // мы могли бы вообще не рисовать, но для Paragraph нам нужны пробелы
             line.push_str(symbol);
-            if i + 1 < width { line.push_str(symbol); }
-            if i + 2 < width { line.push(' '); }
+            if i + 1 < width {
+                line.push_str(symbol);
+            }
+            if i + 2 < width {
+                line.push(' ');
+            }
 
             i += 3;
         }
-        
+
         cava_content.push_str(&line);
-        if h_idx > 0 { cava_content.push('\n'); }
+        if h_idx > 0 {
+            cava_content.push('\n');
+        }
     }
 
     let [r, g, b] = conf.ui.colors.buttons;
