@@ -1,8 +1,7 @@
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
-    style::{Color, Style},
-    widgets::Paragraph,
+    style::{Color},
 };
 use std::sync::{Mutex, OnceLock};
 
@@ -12,6 +11,7 @@ static PREV_FREQS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
     let ui = &conf.ui;
+    let _ = ui.cava_update_ms; 
 
     if area.height < 2 || raw_frequencies.is_empty() { return; }
 
@@ -19,82 +19,76 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
-    let mut prev_lock = PREV_FREQS.get_or_init(|| Mutex::new(vec![0.0; 512])).lock().unwrap();
-    if prev_lock.len() != raw_frequencies.len() {
-        *prev_lock = vec![0.0; raw_frequencies.len()];
-    }
+    let mut prev_lock = PREV_FREQS
+            .get_or_init(|| Mutex::new(vec![0.0; 512]))
+            .lock()
+            .unwrap();
 
-    // Считаем среднюю энергию кадра для детектора тишины
     let avg_energy: f32 = raw_frequencies.iter().sum::<f32>() / raw_frequencies.len() as f32;
 
+    // 1. ПОДГОТОВКА ДАННЫХ
     let frequencies: Vec<f32> = raw_frequencies
         .iter()
         .enumerate()
         .map(|(i, &raw_val)| {
             let prev_val = prev_lock[i];
-
-            // Если общая энергия кадра ниже порога — принудительно падаем в ноль
             if avg_energy < ui.cava_noise_gate {
                 let dropped = (prev_val * ui.cava_fall_speed).max(0.0);
                 prev_lock[i] = dropped;
                 return dropped;
             }
-
-            // ВЫРАВНИВАНИЕ ЯМЫ (Bell Curve)
             let pos = i as f32 / raw_frequencies.len() as f32;
-            // Усиливаем центр (pos 0.5), игнорируя края (бас и вч)
-            let bell = (-(pos - 0.5).powi(2) * 8.0).exp(); 
-            let total_boost = 1.0 + (ui.cava_tilt * bell);
-
-            // Расчет целевой высоты
+            let edge_taper = (pos * std::f32::consts::PI).sin().powf(0.25);
+            let bell = (-(pos - 0.5).powi(2) * 10.0).exp();
+            let total_boost = edge_taper * (1.0 + (ui.cava_tilt * bell));
             let target = (raw_val * ui.cava_sensitivity * total_boost).powf(ui.cava_exponent);
-
-            // Плавность взлета и падения
             let final_val = if target > prev_val {
                 prev_val + (target - prev_val) * ui.cava_attack
             } else {
                 (prev_val * ui.cava_fall_speed).max(0.0)
             };
-
-            let out = final_val.clamp(0.0, 1.0);
-            prev_lock[i] = out;
-            out
+            prev_lock[i] = final_val.clamp(0.0, 1.0);
+            prev_lock[i]
         })
         .collect();
 
-    // Отрисовка
-    let symbols = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-    let mut cava_content = String::with_capacity(width * height * 4);
+    // 2. ОТРИСОВКА В БУФЕР (БЕЗ ДЕПРЕКЕЙТЕД МЕТОДОВ)
+    let symbols = ["▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    let main_color = Color::Rgb(ui.colors.buttons[0], ui.colors.buttons[1], ui.colors.buttons[2]);
+    let buffer = f.buffer_mut();
 
-    for h_idx in (0..height).rev() {
-        let mut line = String::with_capacity(width * 4);
-        let mut i = 0;
-        while i < width {
-            let start = (i * frequencies.len()) / width;
-            let end = ((i + 1) * frequencies.len()) / width;
-            let chunk = &frequencies[start..end.max(start + 1)];
-            let val = chunk.iter().sum::<f32>() / chunk.len() as f32;
+    for x in 0..width {
+        if x % 3 == 2 { continue; } // Пропуск для зазора
 
-            let level_min = h_idx as f32 / height as f32;
-            let level_max = (h_idx + 1) as f32 / height as f32;
+        let start = (x * frequencies.len()) / width;
+        let end = ((x + 1) * frequencies.len()) / width;
+        let val = frequencies[start..end.max(start + 1)].iter().sum::<f32>() / (end - start).max(1) as f32;
 
-            let char_idx = if val >= level_max { 7 }
-            else if val > level_min {
-                (((val - level_min) / (level_max - level_min)) * 8.0) as usize
-            } else { 0 };
+        if val <= 0.001 { continue; }
 
-            let sym = symbols[char_idx.min(7)];
-            line.push_str(sym);
-            if i + 1 < width { line.push_str(sym); }
-            if i + 2 < width { line.push(' '); }
-            i += 3;
+        let total_symbols = (val * height as f32 * 8.0) as usize;
+        let full_blocks = total_symbols / 8;
+        let partial_block = total_symbols % 8;
+
+        for y in 0..height {
+            if y > full_blocks { break; } // Дальше рисовать нечего
+
+            let cell_y = inner_area.bottom().saturating_sub(1 + y as u16);
+            let cell_x = inner_area.left() + x as u16;
+
+            if cell_y < inner_area.top() { break; }
+
+            if y < full_blocks {
+                // Используем новый синтаксис доступа к ячейке
+                if let Some(cell) = buffer.cell_mut((cell_x, cell_y)) {
+                    cell.set_symbol("█").set_fg(main_color);
+                }
+            } else if partial_block > 0 {
+                let sym = symbols[(partial_block - 1).min(6)];
+                if let Some(cell) = buffer.cell_mut((cell_x, cell_y)) {
+                    cell.set_symbol(sym).set_fg(main_color);
+                }
+            }
         }
-        cava_content.push_str(&line);
-        if h_idx > 0 { cava_content.push('\n'); }
     }
-
-    f.render_widget(
-        Paragraph::new(cava_content).style(Style::default().fg(Color::Rgb(ui.colors.buttons[0], ui.colors.buttons[1], ui.colors.buttons[2]))),
-        inner_area,
-    );
 }
