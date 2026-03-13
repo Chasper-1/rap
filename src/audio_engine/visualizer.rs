@@ -95,77 +95,65 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                             let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
 
                             for i in 0..target_width {
-                                // Твои лимиты зон
-                                let b_limit = (target_width as f32 * 0.25) as usize;
-                                let m_limit = (target_width as f32 * 0.65) as usize;
+                                let f_min: f32 = 20.0;
+                                let f_max: f32 = 15000.0;
+                                let pct_s = i as f32 / target_width as f32;
+                                let pct_e = (i + 1) as f32 / target_width as f32;
 
-                                // Прямой расчет частот без логарифмической ебли
-                                let (start_hz, end_hz, zone_sens) = if i < b_limit {
-                                    let pct_s = i as f32 / b_limit as f32;
-                                    let pct_e = (i + 1) as f32 / b_limit as f32;
-                                    (
-                                        30.0 + 770.0 * pct_s,
-                                        30.0 + 770.0 * pct_e,
-                                        ui.cava_sensitivity_low,
-                                    )
-                                } else if i < m_limit {
-                                    let pct_s = (i - b_limit) as f32 / (m_limit - b_limit) as f32;
-                                    let pct_e =
-                                        (i - b_limit + 1) as f32 / (m_limit - b_limit) as f32;
-                                    (
-                                        800.0 + 4200.0 * pct_s,
-                                        800.0 + 4200.0 * pct_e,
-                                        ui.cava_sensitivity_mid,
-                                    )
-                                } else {
-                                    let pct_s =
-                                        (i - m_limit) as f32 / (target_width - m_limit) as f32;
-                                    let pct_e =
-                                        (i - m_limit + 1) as f32 / (target_width - m_limit) as f32;
-                                    (
-                                        5000.0 + 13000.0 * pct_s,
-                                        5000.0 + 13000.0 * pct_e,
-                                        ui.cava_sensitivity_high,
-                                    )
-                                };
+                                let ratio: f32 = f_max / f_min;
+                                let start_hz = f_min * ratio.powf(pct_s);
+                                let end_hz = f_min * ratio.powf(pct_e);
 
                                 let s_idx = get_idx(start_hz);
                                 let e_idx = get_idx(end_hz).max(s_idx + 1);
 
-                                let mut amp = 0.0;
+                                let mut energy = 0.0;
                                 let chunk = &out_spectrum[s_idx..e_idx.min(out_spectrum.len())];
 
                                 if !chunk.is_empty() {
                                     for bin in chunk {
-                                        let n = bin.norm();
-                                        if n > amp {
-                                            amp = n;
-                                        }
+                                        energy += bin.norm();
                                     }
+                                    energy /= chunk.len() as f32;
+
+                                    // Компенсация ВЧ + TILT
+                                    // Tilt работает как весы: на i=0 (бас) влияния нет, на i=max — максимальное
+                                    let freq_boost = 1.0 + (start_hz / 1500.0);
+                                    energy *= freq_boost * (1.0 + ui.cava_tilt * pct_s);
                                 }
 
-                                // Твоя чувствительность в чистом виде
-                                let mut val = if amp > ui.cava_noise_gate {
-                                    amp * zone_sens
+                                // Зоны
+                                let zone_sens = if i < target_width / 4 {
+                                    ui.cava_sensitivity_low
+                                } else if i < target_width / 2 {
+                                    ui.cava_sensitivity_mid
                                 } else {
-                                    0.0
+                                    ui.cava_sensitivity_high
                                 };
 
-                                val *= 1.0 + (ui.cava_tilt * (i as f32 / target_width as f32));
+                                let mut val = (energy * zone_sens).powf(ui.cava_exponent);
 
-                                // Прямой tanh и экспонента из конфига
-                                val = val.tanh().powf(ui.cava_exponent);
-
-                                // Инерция (Attack/Fall)
-                                let prev = prev_freqs[i];
-                                if val > prev {
-                                    val = prev + (val - prev) * ui.cava_attack;
-                                } else {
-                                    val = (prev * ui.cava_fall_speed).max(val);
+                                if val < ui.cava_noise_gate {
+                                    val = 0.0;
                                 }
 
-                                current_freqs[i] = val.clamp(0.0, 1.0);
+                                // Гравитация
+                                let prev = prev_freqs[i];
+                                if val > prev {
+                                    current_freqs[i] = prev + (val - prev) * ui.cava_attack;
+                                } else {
+                                    current_freqs[i] = prev * ui.cava_fall_speed;
+                                }
                             }
+
+                            // Пост-сглаживание (Плавные переходы)
+                            let mut final_freqs = current_freqs.clone();
+                            for i in 1..target_width - 1 {
+                                final_freqs[i] = (current_freqs[i - 1] * 0.25)
+                                    + (current_freqs[i] * 0.5)
+                                    + (current_freqs[i + 1] * 0.25);
+                            }
+                            current_freqs = final_freqs;
 
                             prev_freqs = current_freqs.clone();
                             if let Ok(mut out) = output.try_lock() {
