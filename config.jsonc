@@ -9,6 +9,7 @@
     "max_comment_length": 60,
     "search_height": 4, // количество строк от края верхнего.
     "cava_height": 4, // нижний бар
+    "cava_fall_speed": 0.92,
     "step_offset": 3, // количество строк под вырез левый.
 
     "line_x": 1, // Позиция по горизонтали
