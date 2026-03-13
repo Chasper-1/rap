@@ -95,8 +95,9 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                             let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
 
                             for i in 0..target_width {
+                                // 1. Сетка частот (как в CAVA)
                                 let f_min: f32 = 20.0;
-                                let f_max: f32 = 15000.0;
+                                let f_max: f32 = 12000.0; // 12кГц достаточно для терминала
                                 let pct_s = i as f32 / target_width as f32;
                                 let pct_e = (i + 1) as f32 / target_width as f32;
 
@@ -107,6 +108,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 let s_idx = get_idx(start_hz);
                                 let e_idx = get_idx(end_hz).max(s_idx + 1);
 
+                                // 2. Энергия (Интеграл)
                                 let mut energy = 0.0;
                                 let chunk = &out_spectrum[s_idx..e_idx.min(out_spectrum.len())];
 
@@ -114,15 +116,18 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     for bin in chunk {
                                         energy += bin.norm();
                                     }
-                                    energy /= chunk.len() as f32;
+                                    energy /= chunk.len() as f32; // Усредняем, чтобы не зависеть от ширины зоны
 
-                                    // Компенсация ВЧ + TILT
-                                    // Tilt работает как весы: на i=0 (бас) влияния нет, на i=max — максимальное
-                                    let freq_boost = 1.0 + (start_hz / 1500.0);
-                                    energy *= freq_boost * (1.0 + ui.cava_tilt * pct_s);
+                                    // Tilt — единственный мягкий множитель
+                                    energy *= 1.0 + (ui.cava_tilt * pct_s);
                                 }
 
-                                // Зоны
+                                // 3. Noise Gate (вот он, чтобы варнинг ушел)
+                                if energy < ui.cava_noise_gate {
+                                    energy = 0.0;
+                                }
+
+                                // 4. Чувствительность зон
                                 let zone_sens = if i < target_width / 4 {
                                     ui.cava_sensitivity_low
                                 } else if i < target_width / 2 {
@@ -131,13 +136,10 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     ui.cava_sensitivity_high
                                 };
 
-                                let mut val = (energy * zone_sens).powf(ui.cava_exponent);
+                                // Считаем финальное значение
+                                let val = (energy * zone_sens).powf(ui.cava_exponent);
 
-                                if val < ui.cava_noise_gate {
-                                    val = 0.0;
-                                }
-
-                                // Гравитация
+                                // 5. Физика (Гравитация)
                                 let prev = prev_freqs[i];
                                 if val > prev {
                                     current_freqs[i] = prev + (val - prev) * ui.cava_attack;
@@ -146,7 +148,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 }
                             }
 
-                            // Пост-сглаживание (Плавные переходы)
+                            // Пост-сглаживание (Плавность)
                             let mut final_freqs = current_freqs.clone();
                             for i in 1..target_width - 1 {
                                 final_freqs[i] = (current_freqs[i - 1] * 0.25)
