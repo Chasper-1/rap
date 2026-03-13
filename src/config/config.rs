@@ -15,12 +15,18 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct InputConfig {
-    pub quit: String,
-    pub toggle_pause: String,
-    pub vol_up: String,
-    pub vol_down: String,
-    pub forward: String,
-    pub backward: String,
+    pub quit: Vec<String>,
+    pub toggle_pause: Vec<String>,
+    pub vol_up: Vec<String>,
+    pub vol_down: Vec<String>,
+    pub forward: Vec<String>,
+    pub backward: Vec<String>,
+
+    #[serde(rename = "forward-step")]
+    pub forward_step: i64,
+
+    #[serde(rename = "backward-step")]
+    pub backward_step: i64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -129,12 +135,14 @@ impl Config {
                 },
             },
             input: InputConfig {
-                quit: "q | Esc".into(),
-                toggle_pause: "Space".into(),
-                vol_up: "= | +".into(),
-                vol_down: "- | _".into(),
-                forward: "Right | f".into(),
-                backward: "Left | b".into(),
+                quit: vec!["q".into(), "Esc".into()],
+                toggle_pause: vec!["Space".into()],
+                vol_up: vec!["=".into(), "+".into()],
+                vol_down: vec!["-".into(), "_".into()],
+                forward: vec!["Right".into(), "f".into()],
+                backward: vec!["Left".into(), "b".into()],
+                forward_step: 5,
+                backward_step: 5,
             },
             logging: LoggingConfig { max_logs: 5 },
         }

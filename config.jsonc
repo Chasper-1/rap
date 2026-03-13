@@ -3,17 +3,17 @@
     "separators": [",", ";", "/", "&"],
     "feat_keywords": ["feat.", "ft.", "feat", "ft", "with"],
     "exceptions": ["MiyaGi & Эндшпиль", "AC/DC"],
-    "year_length": 4
+    "year_length": 4,
   },
   "ui": {
     "max_comment_length": 60,
-    "search_height": 4,      // количество строк от края верхнего.
-    "cava_height": 3,        // нижний бар
-    "step_offset": 3,        // количество строк под вырез левый.
+    "search_height": 4, // количество строк от края верхнего.
+    "cava_height": 3, // нижний бар
+    "step_offset": 3, // количество строк под вырез левый.
 
-    "line_x": 1,             // Позиция по горизонтали
-    "line_y": 28,            // Позиция по вертикали (на какой высоте рисовать)
-    "line_width": 2,         // Длина самой палки
+    "line_x": 1, // Позиция по горизонтали
+    "line_y": 28, // Позиция по вертикали (на какой высоте рисовать)
+    "line_width": 2, // Длина самой палки
 
     "search_box_x": 1,
     "search_box_y": 0,
@@ -33,18 +33,20 @@
       "search_label": [200, 200, 200],
       "regex_label": [200, 200, 200],
       "library_label": [200, 200, 200],
-      "buttons": [167, 192, 128]
-    }
+      "buttons": [167, 192, 128],
+    },
   },
-  "input":{
-    "quit": "q | Esc",
-    "toggle_pause": "Space",
-    "vol_up": "= | +",
-    "vol_down": "- | _",
-    "forward": "Right",
-    "backward": "Left",
+  "input": {
+    "quit": ["q", "Esc"],
+    "toggle_pause": ["Space", "p"],
+    "vol_up": ["+", "="],
+    "vol_down": ["-", "_"],
+    "forward": ["Right", "d"],
+    "backward": ["Left", "a"],
+    "forward-step": 5,
+    "backward-step": 5,
   },
   "logging": {
-    "max_logs": 5
-  }
+    "max_logs": 5,
+  },
 }

@@ -57,13 +57,18 @@ impl<R: Read + Seek> Iterator for OpusSource<R> {
             loop {
                 match self.packet_reader.read_packet() {
                     Ok(Some(packet)) => {
-                        if packet.data.starts_with(b"OpusHead") || packet.data.starts_with(b"OpusTags") {
+                        if packet.data.starts_with(b"OpusHead")
+                            || packet.data.starts_with(b"OpusTags")
+                        {
                             continue;
                         }
 
                         let mut pcm_buf = vec![0.0f32; 5760 * self.channels as usize];
-                        if let Ok(decoded_size) = self.decoder.decode_float(&packet.data, &mut pcm_buf, false) {
-                            self.sample_buffer = pcm_buf[..decoded_size * self.channels as usize].to_vec();
+                        if let Ok(decoded_size) =
+                            self.decoder.decode_float(&packet.data, &mut pcm_buf, false)
+                        {
+                            self.sample_buffer =
+                                pcm_buf[..decoded_size * self.channels as usize].to_vec();
                             self.buffer_pos = 0;
                             break;
                         }
@@ -80,10 +85,18 @@ impl<R: Read + Seek> Iterator for OpusSource<R> {
 }
 
 impl<R: Read + Seek + Send> Source for OpusSource<R> {
-    fn current_span_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> NonZero<u16> { NonZero::new(self.channels).unwrap_or(NonZero::new(2).unwrap()) }
-    fn sample_rate(&self) -> NonZero<u32> { NonZero::new(self.sample_rate).unwrap_or(NonZero::new(48000).unwrap()) }
-    fn total_duration(&self) -> Option<Duration> { None }
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> NonZero<u16> {
+        NonZero::new(self.channels).unwrap_or(NonZero::new(2).unwrap())
+    }
+    fn sample_rate(&self) -> NonZero<u32> {
+        NonZero::new(self.sample_rate).unwrap_or(NonZero::new(48000).unwrap())
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
 
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
         let granule = (pos.as_secs_f64() * 48000.0) as u64;
@@ -93,8 +106,8 @@ impl<R: Read + Seek + Send> Source for OpusSource<R> {
             self.buffer_pos = 0;
             Ok(())
         } else {
-            Err(rodio::source::SeekError::NotSupported { 
-                underlying_source: "OpusSource" 
+            Err(rodio::source::SeekError::NotSupported {
+                underlying_source: "OpusSource",
             })
         }
     }
@@ -130,8 +143,12 @@ impl AudioEngine {
         }
     }
 
-    pub async fn pause(&self) { self.player.lock().await.pause(); }
-    pub async fn resume(&self) { self.player.lock().await.play(); }
+    pub async fn pause(&self) {
+        self.player.lock().await.pause();
+    }
+    pub async fn resume(&self) {
+        self.player.lock().await.play();
+    }
 
     pub async fn set_volume(&self, volume: f32) {
         self.player.lock().await.set_volume(volume.clamp(0.0, 1.0));
@@ -146,17 +163,6 @@ impl AudioEngine {
         let _ = p.try_seek(Duration::from_secs(seconds));
     }
 
-    pub async fn seek_relative(&self, offset_secs: i64) {
-        let p = self.player.lock().await;
-        let current_pos = p.get_pos();
-        let new_pos = if offset_secs >= 0 {
-            current_pos + Duration::from_secs(offset_secs as u64)
-        } else {
-            current_pos.saturating_sub(Duration::from_secs(offset_secs.unsigned_abs()))
-        };
-        let _ = p.try_seek(new_pos);
-    }
-
     pub async fn get_current_pos(&self) -> u64 {
         self.player.lock().await.get_pos().as_secs()
     }
@@ -169,34 +175,62 @@ impl AudioEngine {
         let path_str = path.to_string();
         let player_lock = self.player.clone();
         let (artist, title, _, channels) = self.get_audio_info(&path_str).await;
-
+    
         tokio::spawn(async move {
             let source_result = tokio::task::spawn_blocking(move || -> Option<Box<dyn Source + Send>> {
                 let file = File::open(&path_str).ok()?;
-                let reader = BufReader::new(file);
-
-                if path_str.to_lowercase().ends_with(".opus") {
-                    OpusSource::new(reader, channels).map(|s| Box::new(s) as Box<dyn Source + Send>)
-                } else {
-                    Decoder::new(reader).ok().map(|d| Box::new(d) as Box<dyn Source + Send>)
+                let ext = path_str.to_lowercase();
+    
+                // Твой Opus оставляем
+                if ext.ends_with(".opus") {
+                    return OpusSource::new(BufReader::new(file), channels)
+                        .map(|s| Box::new(s) as Box<dyn Source + Send>);
                 }
+                
+                Decoder::new(file).ok()
+                    .map(|d| Box::new(d.track_position()) as Box<dyn Source + Send>)
             }).await;
-
+    
             if let Ok(Some(src)) = source_result {
-                let player = player_lock.lock().await;
-                player.stop();
-                player.append(src);
-                player.play();
+                let p = player_lock.lock().await;
+                p.stop();   // Очищаем старые сурсы
+                p.append(src);
+                p.play();
             }
         });
         (artist, title)
+    }
+    
+    pub async fn seek_relative(&self, offset_secs: i64) {
+        let p = self.player.lock().await;
+        
+        // 1. Получаем текущую позицию
+        let current_pos = p.get_pos();
+        
+        // 2. Считаем новую позицию максимально консервативно
+        let current_secs = current_pos.as_secs_f64();
+        let target_secs = (current_secs + offset_secs as f64).max(0.0);
+        let target_duration = std::time::Duration::from_secs_f64(target_secs);
+        
+        // 3. Пытаемся мотать. Если Symphonia внутри, она ДОЛЖНА прыгнуть назад по файлу.
+        if let Err(e) = p.try_seek(target_duration) {
+            logger::log(&format!("AUDIO ERROR: Seek failed: {:?}", e));
+        } else {
+            // 4. После перемотки НАЗАД обязательно вызываем play(), 
+            // чтобы плеер пересобрал очередь сэмплов с новой позиции.
+            p.play();
+            logger::log(&format!("AUDIO: Seek to {:.2}s successful", target_secs));
+        }
     }
 
     async fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
         let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
         if let Ok(probe) = Probe::open(path) {
             if let Ok(tagged_file) = probe.read() {
-                if let Some(t) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
+                if let Some(t) = tagged_file
+                    .primary_tag()
+                    .or_else(|| tagged_file.first_tag())
+                {
                     let (artist, title) = crate::parser::artist::process_and_log_metadata(
                         t.artist().map(|s| s.to_string()),
                         t.title().map(|s| s.to_string()),
@@ -204,7 +238,8 @@ impl AudioEngine {
                         t.get_string(ItemKey::Year).map(|s| s.to_string()),
                         t.genre().map(|s| s.to_string()),
                         t.get_string(ItemKey::Comment).map(|s| s.to_string()),
-                    ).await;
+                    )
+                    .await;
                     info.0 = artist;
                     info.1 = title;
                 }

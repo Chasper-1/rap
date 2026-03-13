@@ -6,89 +6,79 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
     let cfg = &Config::global().input;
     let key = event.code;
 
-    // СРАЗУ ЛОГ: ловим вообще любое нажатие
-    crate::logger::log(&format!("DEBUG: Received key: {:?}", key));
+    // Лог нажатия для дебага
+    crate::logger::log(&format!("DEBUG: Key pressed: {:?}", key));
 
-    // 1. ВЫХОД (проверяем первым)
+    // 1. ВЫХОД
     if match_cfg(key, &cfg.quit, "QUIT") {
-        crate::logger::log("INPUT: Exiting application...");
+        crate::logger::log("INPUT: Exiting...");
         return false;
     }
 
-    // 2. УПРАВЛЕНИЕ (через match)
+    // 2. ДЕЙСТВИЯ
     match key {
         // ПАУЗА
         k if match_cfg(k, &cfg.toggle_pause, "PAUSE") => {
             if engine.is_paused().await {
-                crate::logger::log("INPUT: Resuming...");
                 engine.resume().await;
+                crate::logger::log("AUDIO: Resumed");
             } else {
-                crate::logger::log("INPUT: Pausing...");
                 engine.pause().await;
+                crate::logger::log("AUDIO: Paused");
             }
         }
 
-        // ГРОМКОСТЬ ВВЕРХ
+        // ГРОМКОСТЬ +
         k if match_cfg(k, &cfg.vol_up, "VOL_UP") => {
-            let current = engine.get_volume().await;
-            let target = (current + 0.05).min(1.0);
-            crate::logger::log(&format!("INPUT: Vol UP ({:.2} -> {:.2})", current, target));
+            let target = (engine.get_volume().await + 0.05).min(1.0);
             engine.set_volume(target).await;
+            crate::logger::log(&format!("AUDIO: Volume {:.2}", target));
         }
 
-        // ГРОМКОСТЬ ВНИЗ
+        // ГРОМКОСТЬ -
         k if match_cfg(k, &cfg.vol_down, "VOL_DOWN") => {
-            let current = engine.get_volume().await;
-            let target = (current - 0.05).max(0.0);
-            crate::logger::log(&format!("INPUT: Vol DOWN ({:.2} -> {:.2})", current, target));
+            let target = (engine.get_volume().await - 0.05).max(0.0);
             engine.set_volume(target).await;
+            crate::logger::log(&format!("AUDIO: Volume {:.2}", target));
         }
 
-        // ПЕРЕМОТКА ВПЕРЕД
+        // ВПЕРЕД
         k if match_cfg(k, &cfg.forward, "FORWARD") => {
-            crate::logger::log("INPUT: Command SEEK +10s");
-            engine.seek_relative(10).await;
-            let p = engine.get_current_pos().await;
-            crate::logger::log(&format!("AUDIO: New position: {}s", p));
-        }
-
-        // ПЕРЕМОТКА НАЗАД
-        k if match_cfg(k, &cfg.backward, "BACKWARD") => {
-            crate::logger::log("INPUT: Command SEEK -10s");
-            engine.seek_relative(-10).await;
-            let p = engine.get_current_pos().await;
-            crate::logger::log(&format!("AUDIO: New position: {}s", p));
-        }
-
-        // ВЕРНУЛ СУКА (Home или кнопка 0)
-        KeyCode::Home | KeyCode::Char('0') => {
-            crate::logger::log("INPUT: Resetting to START (seek_to 0)");
-            engine.seek_to(0).await;
-            crate::logger::log("AUDIO: Position reset to 0");
-        }
-
-        // Статус-чек
-        KeyCode::Char('p') | KeyCode::Char('з') => {
+            let step = cfg.forward_step;
+            crate::logger::log(&format!("INPUT: Seek {:+}s", step));
+            engine.seek_relative(step).await;
+            
             let pos = engine.get_current_pos().await;
-            crate::logger::log(&format!("DEBUG: Manual check. Current pos: {}s", pos));
+            crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
 
-        // Лог для всех остальных кнопок, которые мы не обработали
-        _ => {
-            crate::logger::log(&format!("INPUT: No action mapped for {:?}", key));
+        // НАЗАД
+        k if match_cfg(k, &cfg.backward, "BACKWARD") => {
+            // На всякий случай гарантируем минус через .abs()
+            let step = -(cfg.backward_step.abs());
+            crate::logger::log(&format!("INPUT: Seek {:+}s", step));
+            engine.seek_relative(step).await;
+            
+            let pos = engine.get_current_pos().await;
+            crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
+
+        // СБРОС (Home / 0)
+        KeyCode::Home | KeyCode::Char('0') => {
+            engine.seek_to(0).await;
+            crate::logger::log("AUDIO: Reset to start");
+        }
+
+        _ => {}
     }
 
     true
 }
 
-fn match_cfg(code: KeyCode, cfg_str: &str, action_label: &str) -> bool {
-    if cfg_str.trim().is_empty() {
-        return false;
-    }
-
-    let is_match = cfg_str.split('|').any(|part| {
-        let s = part.trim().to_lowercase();
+/// Сверяет KeyCode со списком строк из конфига
+fn match_cfg(code: KeyCode, keys: &[String], action_label: &str) -> bool {
+    let is_match = keys.iter().any(|key_name| {
+        let s = key_name.trim().to_lowercase();
         match s.as_str() {
             "space" | " " => code == KeyCode::Char(' '),
             "up"    => code == KeyCode::Up,
@@ -99,7 +89,9 @@ fn match_cfg(code: KeyCode, cfg_str: &str, action_label: &str) -> bool {
             "esc"   => code == KeyCode::Esc,
             "home"  => code == KeyCode::Home,
             "+" | "=" => code == KeyCode::Char('+') || code == KeyCode::Char('='),
-            "-"     => code == KeyCode::Char('-'),
+            "-" | "_" => code == KeyCode::Char('-') || code == KeyCode::Char('_'),
+            
+            // Если в массиве строка из 1 символа (буква/цифра)
             _ if s.chars().count() == 1 => {
                 let target = s.chars().next().unwrap();
                 if let KeyCode::Char(actual) = code {
@@ -113,7 +105,7 @@ fn match_cfg(code: KeyCode, cfg_str: &str, action_label: &str) -> bool {
     });
 
     if is_match {
-        crate::logger::log(&format!("MATCH: Key {:?} -> Action {}", code, action_label));
+        crate::logger::log(&format!("MATCH: {:?} matches {}", code, action_label));
     }
     is_match
 }
