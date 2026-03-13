@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::{Rect, Margin},
-    widgets::Paragraph,
-    style::{Style, Color},
     Frame,
+    layout::{Margin, Rect},
+    style::{Color, Style},
+    widgets::Paragraph,
 };
 
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
@@ -10,7 +10,10 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
         return;
     }
 
-    let inner_area = area.inner(Margin { vertical: 1, horizontal: 1 });
+    let inner_area = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
 
@@ -20,7 +23,7 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     // Генерируем строки сверху вниз
     for h_idx in (0..height).rev() {
         let mut line = String::with_capacity(width);
-        
+
         for i in 0..width {
             // Если массив частот пустой, рисуем "тишину" (самый первый символ)
             let val = if frequencies.is_empty() {
@@ -36,13 +39,13 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
             let level_max = (h_idx + 1) as f32 / height as f32;
 
             let char_idx = if val >= level_max {
-                8 // Полный блок
+                7 // Максимальный индекс (символ "█")
             } else if val > level_min {
-                // Плавный переход внутри одного блока
                 let internal_factor = (val - level_min) / (level_max - level_min);
-                (internal_factor * 8.0) as usize
+                // Ограничиваем сверху, чтобы не вылететь за 7
+                ((internal_factor * 8.0) as usize).min(7)
             } else {
-                0 // Пусто
+                0
             };
 
             line.push_str(symbols[char_idx]);
@@ -55,6 +58,6 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
 
     f.render_widget(
         Paragraph::new(cava_content).style(Style::default().fg(Color::Cyan)),
-        inner_area
+        inner_area,
     );
 }
