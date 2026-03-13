@@ -36,22 +36,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Паник-хендлер (по твоему плану)
     std::panic::set_hook(Box::new(|info| {
-        // Сначала ПРИНУДИТЕЛЬНО возвращаем терминал в нормальный режим
-        // Делаем это через стандартный вывод, игнорируя ошибки
+        // 1. Восстанавливаем терминал сразу
         let _ = crossterm::terminal::disable_raw_mode();
         let mut stdout = std::io::stdout();
         let _ = crossterm::execute!(stdout, crossterm::terminal::LeaveAlternateScreen, crossterm::cursor::Show);
     
-        // Теперь пишем в логгер, что именно случилось
-        crate::logger::log(&format!("CRITICAL PANIC: {}", info));
-        
-        // Сбрасываем логи на диск (через хендл текущего рантайма, как мы делали)
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.block_on(crate::logger::final_flush());
-        }
-    
-        // Печатаем саму ошибку в чистый терминал, чтобы ты её видел
+        // 2. Печатаем в консоль
         eprintln!("\n\x1b[31;1m[FATAL ERROR]:\x1b[0m {}\n", info);
+    
+        // 3. Сбрасываем кэш СИНХРОННО
+        crate::logger::emergency_flush(info);
     }));
 
     // 2. Аргументы теперь опциональны
