@@ -27,64 +27,52 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
         .get_or_init(|| Mutex::new(vec![0.0; raw_frequencies.len()]))
         .lock()
         .unwrap();
-    if prev_lock.len() != raw_frequencies.len() {
-        *prev_lock = vec![0.0; raw_frequencies.len()];
-    }
 
-    let avg_energy: f32 = raw_frequencies.iter().sum::<f32>() / raw_frequencies.len() as f32;
+    // Ограничиваем рабочий диапазон (отрезаем ультразвук и шум, берем первые 80% массива)
+    let focus_range = (raw_frequencies.len() as f32 * 0.8) as usize;
+    let data = &raw_frequencies[..focus_range];
 
-    // --- ШАГ 1: ПЕРВИЧНАЯ ОБРАБОТКА И УСИЛЕНИЕ СЕРЕДИНЫ ---
-    let mut target_freqs: Vec<f32> = raw_frequencies
-        .iter()
-        .enumerate()
-        .map(|(i, &raw_val)| {
-            let pos = i as f32 / raw_frequencies.len() as f32;
+    // --- 1. ПЕРЕРАСЧЕТ ЧАСТОТ С ЛОГАРИФМИЧЕСКИМ ШАГОМ ---
+    let mut target_freqs = vec![0.0f32; width];
 
-            // Оставляем Bell Curve для середины, но чуть мягче (8.0 -> 6.0)
+    for x in (0..width).step_by(3) {
+        let start_pct = (x as f32 / width as f32).powi(2);
+        let end_pct = ((x + 2) as f32 / width as f32).powi(2);
+
+        let start_idx = ((start_pct * data.len() as f32) as usize).min(data.len() - 1);
+        let end_idx = ((end_pct * data.len() as f32) as usize).clamp(start_idx + 1, data.len());
+
+        let chunk = &data[start_idx..end_idx];
+        let mut val = chunk.iter().fold(0.0f32, |m: f32, &v| m.max(v));
+
+        // ПРИМЕНЯЕМ ГЕЙТ: если звук тише порога, то это 0
+        if val < ui.cava_noise_gate {
+            val = 0.0;
+        } else {
+            let pos = x as f32 / width as f32;
             let bell = (-(pos - 0.5).powi(2) * 6.0).exp();
             let total_boost = 1.0 + (ui.cava_tilt * bell);
 
-            // Основной сигнал с твоим гейном
-            let mut val = raw_val * ui.cava_sensitivity * total_boost;
-
-            // --- МАГИЯ: Тангенциальное сжатие (Soft Clip) ---
-            // Это позволяет графику летать, но не дает ему биться головой об потолок.
-            // Вместо жесткого clamp(0.0, 1.0), мы используем гиперболический тангенс.
-            val = (val * 1.5).tanh();
-
-            val.powf(ui.cava_exponent).clamp(0.0, 1.0)
-        })
-        .collect();
-
-    // --- ШАГ 2: ЧАСТОТНОЕ СГЛАЖИВАНИЕ (Убирает "дёрганые" палки) ---
-    // Проходимся 2 раза для мягкости
-    for _ in 0..2 {
-        for i in 1..target_freqs.len() - 1 {
-            target_freqs[i] =
-                target_freqs[i - 1] * 0.25 + target_freqs[i] * 0.5 + target_freqs[i + 1] * 0.25;
+            // Софт-клиппинг и усиление
+            val = (val * ui.cava_sensitivity * total_boost * 1.5).tanh();
         }
+
+        target_freqs[x] = val.powf(ui.cava_exponent).clamp(0.0, 1.0);
     }
 
-    // --- ШАГ 3: ВРЕМЕННАЯ ПЛАВНОСТЬ (Атака и Гравитация) ---
-    for i in 0..target_freqs.len() {
+    // --- 2. СГЛАЖИВАНИЕ И ИНЕРЦИЯ ---
+    for i in (0..width).step_by(3) {
         let target = target_freqs[i];
         let prev = prev_lock[i];
 
-        if avg_energy < ui.cava_noise_gate {
-            // При тишине падаем быстрее
-            prev_lock[i] = (prev * 0.8).max(0.0);
-        } else if target > prev {
-            // Взлет: используем атаку (плавный подъем)
+        if target > prev {
             prev_lock[i] = prev + (target - prev) * ui.cava_attack;
         } else {
-            // Падение: имитируем инерцию (нелинейное падение)
-            // Чем выше был столбик, тем быстрее он начинает падать
-            let fall = (prev - target) * (1.0 - ui.cava_fall_speed);
-            prev_lock[i] = (prev - fall).max(0.0);
+            prev_lock[i] = prev - (prev - target) * (1.0 - ui.cava_fall_speed);
         }
     }
 
-    // --- ШАГ 4: ОТРИСОВКА ---
+    // --- 3. ОТРИСОВКА ---
     let symbols = ["▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let main_color = Color::Rgb(
         ui.colors.buttons[0],
@@ -94,10 +82,7 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let buffer = f.buffer_mut();
 
     for x_idx in (0..width).step_by(3) {
-        let freq_idx = (x_idx * target_freqs.len()) / width;
-        let val = prev_lock[freq_idx];
-
-        // 8 уровней символов на ячейку высоты
+        let val = prev_lock[x_idx];
         let total_levels = (val * height as f32 * 8.0) as usize;
         let full_blocks = total_levels / 8;
         let partial_level = total_levels % 8;
@@ -113,7 +98,7 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
             } else if y == full_blocks && partial_level > 0 {
                 symbols[(partial_level - 1).min(6)]
             } else if y == 0 {
-                "▂" // Вечный фундамент
+                "▂"
             } else {
                 break;
             };
