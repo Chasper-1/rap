@@ -95,37 +95,33 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                             let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
 
                             for i in 0..target_width {
-                                // Делим экран на три равные части
-                                let one_third = target_width / 3;
-                                let two_thirds = (target_width * 2) / 3;
+                                // Твои лимиты зон
+                                let b_limit = (target_width as f32 * 0.25) as usize;
+                                let m_limit = (target_width as f32 * 0.65) as usize;
 
-                                let (start_hz, end_hz, zone_sens) = if i < one_third {
-                                    // --- БАСС (Первая треть) ---
-                                    let pct_s = i as f32 / one_third as f32;
-                                    let pct_e = (i + 1) as f32 / one_third as f32;
-                                    // Расширенный бас до 800Гц, чтобы занять пустоту
+                                // Прямой расчет частот без логарифмической ебли
+                                let (start_hz, end_hz, zone_sens) = if i < b_limit {
+                                    let pct_s = i as f32 / b_limit as f32;
+                                    let pct_e = (i + 1) as f32 / b_limit as f32;
                                     (
-                                        30.0 + 770.0 * pct_s.powf(1.5),
-                                        30.0 + 770.0 * pct_e.powf(1.5),
+                                        30.0 + 770.0 * pct_s,
+                                        30.0 + 770.0 * pct_e,
                                         ui.cava_sensitivity_low,
                                     )
-                                } else if i < two_thirds {
-                                    // --- СЕРЕДИНА (Вторая треть) ---
-                                    let pct_s =
-                                        (i - one_third) as f32 / (two_thirds - one_third) as f32;
-                                    let pct_e = (i - one_third + 1) as f32
-                                        / (two_thirds - one_third) as f32;
+                                } else if i < m_limit {
+                                    let pct_s = (i - b_limit) as f32 / (m_limit - b_limit) as f32;
+                                    let pct_e =
+                                        (i - b_limit + 1) as f32 / (m_limit - b_limit) as f32;
                                     (
                                         800.0 + 4200.0 * pct_s,
                                         800.0 + 4200.0 * pct_e,
                                         ui.cava_sensitivity_mid,
                                     )
                                 } else {
-                                    // --- ВЕРХА (Последняя треть) ---
-                                    let pct_s = (i - two_thirds) as f32
-                                        / (target_width - two_thirds) as f32;
-                                    let pct_e = (i - two_thirds + 1) as f32
-                                        / (target_width - two_thirds) as f32;
+                                    let pct_s =
+                                        (i - m_limit) as f32 / (target_width - m_limit) as f32;
+                                    let pct_e =
+                                        (i - m_limit + 1) as f32 / (target_width - m_limit) as f32;
                                     (
                                         5000.0 + 13000.0 * pct_s,
                                         5000.0 + 13000.0 * pct_e,
@@ -140,7 +136,6 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 let chunk = &out_spectrum[s_idx..e_idx.min(out_spectrum.len())];
 
                                 if !chunk.is_empty() {
-                                    // Берем пиковое значение для максимальной отзывчивости каждого столбика
                                     for bin in chunk {
                                         let n = bin.norm();
                                         if n > amp {
@@ -149,11 +144,19 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     }
                                 }
 
-                                let mut val =
-                                    (if amp < ui.cava_noise_gate { 0.0 } else { amp }) * zone_sens;
+                                // Твоя чувствительность в чистом виде
+                                let mut val = if amp > ui.cava_noise_gate {
+                                    amp * zone_sens
+                                } else {
+                                    0.0
+                                };
+
                                 val *= 1.0 + (ui.cava_tilt * (i as f32 / target_width as f32));
+
+                                // Прямой tanh и экспонента из конфига
                                 val = val.tanh().powf(ui.cava_exponent);
 
+                                // Инерция (Attack/Fall)
                                 let prev = prev_freqs[i];
                                 if val > prev {
                                     val = prev + (val - prev) * ui.cava_attack;
@@ -161,9 +164,6 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     val = (prev * ui.cava_fall_speed).max(val);
                                 }
 
-                                if val < 0.001 {
-                                    val = 0.0;
-                                }
                                 current_freqs[i] = val.clamp(0.0, 1.0);
                             }
 
