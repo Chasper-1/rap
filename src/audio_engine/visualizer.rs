@@ -95,9 +95,8 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                             let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
 
                             for i in 0..target_width {
-                                // 1. Сетка частот (как в CAVA)
                                 let f_min: f32 = 20.0;
-                                let f_max: f32 = 12000.0; // 12кГц достаточно для терминала
+                                let f_max: f32 = 15000.0;
                                 let pct_s = i as f32 / target_width as f32;
                                 let pct_e = (i + 1) as f32 / target_width as f32;
 
@@ -108,7 +107,6 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 let s_idx = get_idx(start_hz);
                                 let e_idx = get_idx(end_hz).max(s_idx + 1);
 
-                                // 2. Энергия (Интеграл)
                                 let mut energy = 0.0;
                                 let chunk = &out_spectrum[s_idx..e_idx.min(out_spectrum.len())];
 
@@ -116,30 +114,39 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     for bin in chunk {
                                         energy += bin.norm();
                                     }
-                                    energy /= chunk.len() as f32; // Усредняем, чтобы не зависеть от ширины зоны
+                                    // 1. УСРЕДНЯЕМ. Теперь энергия не зависит от того, 10 там бинов или 100.
+                                    energy /= chunk.len() as f32;
 
-                                    // Tilt — единственный мягкий множитель
+                                    // 2. МЯГКАЯ КОРРЕКЦИЯ. Вместо умножения на 7.0, используем логарифм.
+                                    // Это подтянет высокие, но не даст им взорваться.
+                                    let weight = 1.0;
+                                    energy *= weight;
+
                                     energy *= 1.0 + (ui.cava_tilt * pct_s);
                                 }
 
-                                // 3. Noise Gate (вот он, чтобы варнинг ушел)
                                 if energy < ui.cava_noise_gate {
                                     energy = 0.0;
                                 }
 
-                                // 4. Чувствительность зон
-                                let zone_sens = if i < target_width / 4 {
+                                // Твои зоны
+                                let zone_sens = if i < target_width / 3 {
                                     ui.cava_sensitivity_low
-                                } else if i < target_width / 2 {
+                                } else if i < (target_width * 2) / 3 {
                                     ui.cava_sensitivity_mid
                                 } else {
                                     ui.cava_sensitivity_high
                                 };
 
-                                // Считаем финальное значение
-                                let val = (energy * zone_sens).powf(ui.cava_exponent);
+                                // 3. ФИНАЛЬНЫЙ РАСЧЕТ.
+                                // Если всё еще слишком громко — просто уменьши чувствительность в конфиге до 1.0
+                                let mut val = (energy * zone_sens).powf(ui.cava_exponent);
 
-                                // 5. Физика (Гравитация)
+                                // Мягкий ограничитель (не дает "бетона", просто плавно тормозит у края)
+                                if val > 1.0 {
+                                    val = 1.0;
+                                }
+
                                 let prev = prev_freqs[i];
                                 if val > prev {
                                     current_freqs[i] = prev + (val - prev) * ui.cava_attack;
@@ -147,6 +154,15 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     current_freqs[i] = prev * ui.cava_fall_speed;
                                 }
                             }
+
+                            // 4. СКЛЕЙКА (Smoothing)
+                            let mut final_freqs = current_freqs.clone();
+                            for i in 1..target_width - 1 {
+                                final_freqs[i] = (current_freqs[i - 1] * 0.25)
+                                    + (current_freqs[i] * 0.5)
+                                    + (current_freqs[i + 1] * 0.25);
+                            }
+                            current_freqs = final_freqs;
 
                             // Пост-сглаживание (Плавность)
                             let mut final_freqs = current_freqs.clone();
