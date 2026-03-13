@@ -47,6 +47,7 @@ pub struct UiConfig {
     // Координаты (строго в корне ui)
     pub search_height: u16,
     pub cava_height: u16,
+    pub cava_fall_speed: f32,
     pub step_offset: u16,
     pub line_x: u16,
     pub line_y: u16,
@@ -112,6 +113,7 @@ impl Config {
             ui: UiConfig {
                 search_height: 4,
                 cava_height: 3,
+                cava_fall_speed: 0.88,
                 step_offset: 3,
                 line_x: 1,
                 line_y: 28,
