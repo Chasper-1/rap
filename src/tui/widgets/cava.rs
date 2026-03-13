@@ -11,7 +11,7 @@ static PREV_FREQS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
 
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
-    let fall_speed = conf.ui.cava_fall_speed.clamp(0.0, 1.0);
+    let ui = &conf.ui; // Для краткости
 
     if area.height < 3 {
         return;
@@ -28,7 +28,6 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
         .get_or_init(|| Mutex::new(vec![0.0; 512]))
         .lock()
         .unwrap();
-
     if prev_lock.len() != raw_frequencies.len() {
         *prev_lock = vec![0.0; raw_frequencies.len()];
     }
@@ -37,32 +36,42 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
     let frequencies: Vec<f32> = raw_frequencies
         .iter()
         .enumerate()
-        .map(|(i, &current_val)| {
-            // Применяем корень, чтобы "сплющить" динамический диапазон
-            // (тихие звуки станут видны, громкие перестанут биться в потолок)
-            let mut val = current_val.sqrt() * 1.2;
-
-            // Частотное выравнивание (Bell-curve)
-            // Придавливаем края (бас и ультразвук), акцентируем середину
-            let len = raw_frequencies.len() as f32;
-            let pos = i as f32 / len;
-            let bell_weight = 0.5 + 0.5 * (-(pos - 0.5).powi(2) * 4.0).exp();
-            val *= bell_weight;
-
-            // Noise gate + минимальный порог
-            if val < 0.02 {
-                val = 0.01;
-            }
-
+        .map(|(i, &raw_val)| {
             let prev_val = prev_lock[i];
-            let new_val = if val > prev_val {
-                val
+
+            // 1. УСИЛЕНИЕ И ВЫРАВНИВАНИЕ (БЕЗ ЖЕСТКОГО ЛОГАРИФМА)
+            // Используем powf(0.5) - это корень. Он дает динамику, но не "плющит" звук как log10
+            let mut val = raw_val.powf(0.5) * ui.cava_sensitivity;
+
+            // 2. ВЕСА (EQ)
+            // Низкие частоты обычно сильнее, поэтому мы их чуть придушим (0.8),
+            // а высокие (индекс i растет) - подтянем.
+            let pos = i as f32 / raw_frequencies.len() as f32;
+            let weight = 0.8 + (pos * 1.5); // Линейно увеличиваем громкость к высоким
+            val *= weight;
+
+            // 3. АВТО-СБРОС (Главная фишка)
+            // Если значение упало ниже предыдущего, мы СРАЗУ включаем падение.
+            // Никакого "сглаживания взлета" (атаки), если хочешь резкости.
+            let mut final_val = if val > prev_val {
+                val // Резкий прыжок вверх (как в оригинале)
             } else {
-                prev_val * fall_speed
+                prev_val * ui.cava_fall_speed // Плавный спад
             };
 
-            prev_lock[i] = new_val;
-            new_val
+            // 4. ОГРАНИЧЕНИЕ И "ПОЛ"
+            // Не даем залипать в потолке
+            if final_val > 1.0 {
+                final_val = 1.0;
+            }
+
+            // Если сигнал совсем сдох, принудительно тянем к фундаменту
+            if raw_val < ui.cava_noise_gate {
+                final_val = (prev_val * ui.cava_fall_speed).max(0.05);
+            }
+
+            prev_lock[i] = final_val;
+            final_val
         })
         .collect();
 

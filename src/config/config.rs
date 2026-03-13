@@ -48,6 +48,10 @@ pub struct UiConfig {
     pub search_height: u16,
     pub cava_height: u16,
     pub cava_fall_speed: f32,
+    pub cava_min_db: f32,      // Порог тишины (напр. -60.0)
+    pub cava_sensitivity: f32, // Общий гейн (напр. 1.0)
+    pub cava_noise_gate: f32,  // Отсечка мусора (напр. 0.005)
+    pub cava_attack: f32,      // Скорость взлета (0.1 - 1.0)
     pub step_offset: u16,
     pub line_x: u16,
     pub line_y: u16,
@@ -114,6 +118,10 @@ impl Config {
                 search_height: 4,
                 cava_height: 3,
                 cava_fall_speed: 0.88,
+                cava_min_db: -30.0,
+                cava_sensitivity: 0.8,
+                cava_noise_gate: 0.01,
+                cava_attack: 0.5,
                 step_offset: 3,
                 line_x: 1,
                 line_y: 28,
