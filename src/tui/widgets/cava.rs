@@ -39,39 +39,42 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, raw_frequencies: &[f32]) {
         .map(|(i, &raw_val)| {
             let prev_val = prev_lock[i];
 
-            // 1. УСИЛЕНИЕ И ВЫРАВНИВАНИЕ (БЕЗ ЖЕСТКОГО ЛОГАРИФМА)
-            // Используем powf(0.5) - это корень. Он дает динамику, но не "плющит" звук как log10
-            let mut val = raw_val.powf(0.5) * ui.cava_sensitivity;
+            // 1. ЖЕСТКИЙ ПРЕРЫВАТЕЛЬ (KILL SWITCH)
+            // Если сигнал ниже порога (шум), мы ВООБЩЕ ничего не считаем.
+            // Просто берем старое значение и умножаем на скорость падения.
+            if raw_val < ui.cava_noise_gate {
+                let mut dropped = prev_val * ui.cava_fall_speed;
 
-            // 2. ВЕСА (EQ)
-            // Низкие частоты обычно сильнее, поэтому мы их чуть придушим (0.8),
-            // а высокие (индекс i растет) - подтянем.
+                // Если упали совсем низко, рисуем фундамент и сбрасываем в Lock
+                if dropped < 0.05 {
+                    dropped = 0.05;
+                }
+
+                prev_lock[i] = dropped;
+                return dropped;
+            }
+
+            // 2. РАСЧЕТ ДИНАМИКИ (Только если есть звук)
+            // Используем экспоненту, чтобы "просадить" слабые сигналы вниз
+            let mut val = raw_val.powf(ui.cava_exponent) * ui.cava_sensitivity;
+
+            // Поднимаем высокие частоты (EQ)
             let pos = i as f32 / raw_frequencies.len() as f32;
-            let weight = 0.8 + (pos * 1.5); // Линейно увеличиваем громкость к высоким
+            let weight = 0.7 + (pos * 1.8);
             val *= weight;
 
-            // 3. АВТО-СБРОС (Главная фишка)
-            // Если значение упало ниже предыдущего, мы СРАЗУ включаем падение.
-            // Никакого "сглаживания взлета" (атаки), если хочешь резкости.
-            let mut final_val = if val > prev_val {
-                val // Резкий прыжок вверх (как в оригинале)
+            // 3. ИНЕРЦИЯ
+            let final_val = if val > prev_val {
+                // Взлет: учитываем attack
+                prev_val + (val - prev_val) * ui.cava_attack
             } else {
-                prev_val * ui.cava_fall_speed // Плавный спад
+                // Падение: по конфигу
+                (prev_val * ui.cava_fall_speed).max(0.05)
             };
 
-            // 4. ОГРАНИЧЕНИЕ И "ПОЛ"
-            // Не даем залипать в потолке
-            if final_val > 1.0 {
-                final_val = 1.0;
-            }
-
-            // Если сигнал совсем сдох, принудительно тянем к фундаменту
-            if raw_val < ui.cava_noise_gate {
-                final_val = (prev_val * ui.cava_fall_speed).max(0.05);
-            }
-
-            prev_lock[i] = final_val;
-            final_val
+            let out = final_val.min(1.0);
+            prev_lock[i] = out;
+            out
         })
         .collect();
 

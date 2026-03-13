@@ -9,11 +9,11 @@
     "max_comment_length": 60,
     "search_height": 4, // количество строк от края верхнего.
     "cava_height": 5, // нижний бар
-    "cava_fall_speed": 0.96,
-    "cava_min_db": -30.0,
-    "cava_sensitivity": 0.6,
-    "cava_noise_gate": 0.01,
-    "cava_attack": 0.5,
+    "cava_fall_speed": 0.85,
+    "cava_exponent": 1.2,
+    "cava_sensitivity": 1.0,
+    "cava_noise_gate": 0.1,
+    "cava_attack": 1.0,
     "step_offset": 3, // количество строк под вырез левый.
 
     "line_x": 1, // Позиция по горизонтали
