@@ -14,6 +14,8 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
         crate::logger::log("INPUT: Exiting...");
         return false;
     }
+    
+    let mut current_volume = engine.get_volume().await;
 
     // 2. ДЕЙСТВИЯ
     match key {
@@ -30,16 +32,16 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
 
         // ГРОМКОСТЬ +
         k if match_cfg(k, &cfg.vol_up, "VOL_UP") => {
-            let target = (engine.get_volume().await + 0.05).min(1.0);
-            engine.set_volume(target).await;
-            crate::logger::log(&format!("AUDIO: Volume {:.2}", target));
+            current_volume = (current_volume + 0.05).min(1.0); // Сначала меняем СВОЮ переменную
+            engine.set_volume(current_volume).await; // Потом тупо пушим её в движок
+            crate::logger::log(&format!("AUDIO: Volume {:.2}", current_volume));
         }
 
         // ГРОМКОСТЬ -
         k if match_cfg(k, &cfg.vol_down, "VOL_DOWN") => {
-            let target = (engine.get_volume().await - 0.05).max(0.0);
-            engine.set_volume(target).await;
-            crate::logger::log(&format!("AUDIO: Volume {:.2}", target));
+            current_volume = (current_volume - 0.05).max(0.0); // Сначала меняем СВОЮ переменную
+            engine.set_volume(current_volume).await; // Потом тупо пушим её в движок
+            crate::logger::log(&format!("AUDIO: Volume {:.2}", current_volume));
         }
 
         // ВПЕРЕД
@@ -47,7 +49,7 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
             let step = cfg.forward_step;
             crate::logger::log(&format!("INPUT: Seek {:+}s", step));
             engine.seek_relative(step).await;
-            
+
             let pos = engine.get_current_pos().await;
             crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
@@ -58,7 +60,7 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
             let step = -(cfg.backward_step.abs());
             crate::logger::log(&format!("INPUT: Seek {:+}s", step));
             engine.seek_relative(step).await;
-            
+
             let pos = engine.get_current_pos().await;
             crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
@@ -81,16 +83,16 @@ fn match_cfg(code: KeyCode, keys: &[String], action_label: &str) -> bool {
         let s = key_name.trim().to_lowercase();
         match s.as_str() {
             "space" | " " => code == KeyCode::Char(' '),
-            "up"    => code == KeyCode::Up,
-            "down"  => code == KeyCode::Down,
-            "left"  => code == KeyCode::Left,
+            "up" => code == KeyCode::Up,
+            "down" => code == KeyCode::Down,
+            "left" => code == KeyCode::Left,
             "right" => code == KeyCode::Right,
             "enter" => code == KeyCode::Enter,
-            "esc"   => code == KeyCode::Esc,
-            "home"  => code == KeyCode::Home,
+            "esc" => code == KeyCode::Esc,
+            "home" => code == KeyCode::Home,
             "+" | "=" => code == KeyCode::Char('+') || code == KeyCode::Char('='),
             "-" | "_" => code == KeyCode::Char('-') || code == KeyCode::Char('_'),
-            
+
             // Если в массиве строка из 1 символа (буква/цифра)
             _ if s.chars().count() == 1 => {
                 let target = s.chars().next().unwrap();
