@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use rodio::cpal::traits::HostTrait;
+use rodio::cpal::traits::{DeviceTrait, HostTrait}; // Добавил DeviceTrait
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use rodio::{Player, Source};
 
@@ -33,6 +33,11 @@ impl AudioEngine {
             .default_output_device()
             .expect("System Error: No output device found.");
 
+        // Лог девайса
+        if let Ok(desc) = device.description() {
+            logger::log(&format!("ENGINE: Using device {}", desc));
+        }
+
         let mut stream = DeviceSinkBuilder::from_device(device)
             .expect("Failed to create SinkBuilder")
             .with_sample_rate(NonZero::new(48000).unwrap())
@@ -51,7 +56,6 @@ impl AudioEngine {
             cava_data,
         };
 
-        // Возвращаем dummy_rx, чтобы сигнатура совпадала с твоим main.rs
         let (_, dummy_rx) = mpsc::channel(1);
         (engine, dummy_rx)
     }
@@ -60,7 +64,7 @@ impl AudioEngine {
         let path_str = path.to_string();
         let player_lock = self.player.clone();
 
-        // Оптимизация: получаем инфу о треке в блокирующем потоке, чтобы UI не висел
+        logger::log(&format!("ENGINE: Loading track {}", path));
         let (artist, title, _, channels) = self.get_audio_info(&path_str).await;
         let viz_tx = self.viz_tx.clone();
 
@@ -83,7 +87,6 @@ impl AudioEngine {
                 let p = player_lock.lock().await;
                 p.stop();
 
-                // Оборачиваем источник для визуализации
                 let visual_src = VisualizableSource {
                     input: src,
                     sender: viz_tx.clone(),
@@ -91,6 +94,7 @@ impl AudioEngine {
 
                 p.append(visual_src);
                 p.play();
+                logger::log("ENGINE: Playback started");
             }
         });
 
@@ -119,10 +123,12 @@ impl AudioEngine {
     }
 
     pub async fn pause(&self) {
+        logger::log("ENGINE: Pause");
         self.player.lock().await.pause();
     }
 
     pub async fn resume(&self) {
+        logger::log("ENGINE: Resume");
         self.player.lock().await.play();
     }
 
@@ -164,9 +170,6 @@ impl AudioEngine {
                         .primary_tag()
                         .or_else(|| tagged_file.first_tag())
                     {
-                        // ВОТ ТУТ МЫ ВОЗВРАЩАЕМ ТВОЙ ПАРСЕР
-                        // Поскольку функция в парсере async, а мы в блокирующем потоке,
-                        // используем Handle, чтобы вызвать её.
                         let rt = tokio::runtime::Handle::current();
                         let (artist, title) =
                             rt.block_on(crate::parser::artist::process_and_log_metadata(
@@ -177,7 +180,6 @@ impl AudioEngine {
                                 t.genre().map(|s| s.to_string()),
                                 t.get_string(ItemKey::Comment).map(|s| s.to_string()),
                             ));
-
                         info = (artist, title, sample_rate, channels);
                     } else {
                         info = ("Unknown".into(), "Unknown".into(), sample_rate, channels);

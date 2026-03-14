@@ -78,31 +78,24 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
         let ui = &conf.ui;
 
         loop {
-            // Ждем данные с таймаутом 200мс
-            let msg = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+            // 1. Ждем данные. Тут поток СТРОГО спит, если в канале пусто.
+            let msg = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
 
             match msg {
                 Ok(Some(sample)) => {
                     input_buffer.push(sample);
 
-                    // Выгребаем всё из канала пачкой
-                    let mut count = 0;
+                    // 2. Выгребаем всё из канала в буфер за один раз
                     while let Ok(s) = rx.try_recv() {
                         input_buffer.push(s);
-                        count += 1;
+                        // Ограничиваем буфер, чтобы не сожрать всю память при лагах (4 кадра FFT)
                         if input_buffer.len() > fft_size * 4 {
                             break;
                         }
                     }
 
-                    if count > fft_size {
-                        crate::logger::log(&format!(
-                            "ANALYZER: Large burst detected ({} samples)",
-                            count
-                        ));
-                    }
-
-                    if input_buffer.len() >= fft_size {
+                    // 3. ОБРАБОТКА: Пока в буфере хватает данных на целый блок FFT
+                    while input_buffer.len() >= fft_size {
                         let target_width = if let Ok(out) = output.try_lock() {
                             out.len()
                         } else {
@@ -110,20 +103,15 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                         };
 
                         if target_width > 0 {
-                            let max_amp = input_buffer
-                                .iter()
-                                .take(fft_size)
-                                .fold(0.0f32, |m, x| m.max(x.abs()));
+                            // Берем ровно 2048 сэмплов из начала буфера
+                            scratch_buffer.copy_from_slice(&input_buffer[..fft_size]);
 
+                            let max_amp = scratch_buffer.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+
+                            // Считаем только если есть звук выше порога шума
                             if max_amp > 0.001 {
-                                // ЛОГ: Только когда реально считаем FFT
-                                // crate::logger::log(&format!("ANALYZER: Processing FFT, amp: {:.4}", max_amp));
-
+                                // Ресайз кеша индексов (если ширина окна изменилась)
                                 if target_width != last_width {
-                                    crate::logger::log(&format!(
-                                        "ANALYZER: Resize {} -> {}",
-                                        last_width, target_width
-                                    ));
                                     cached_indices.clear();
                                     let f_min = 20.0f32;
                                     let f_max = 15000.0f32;
@@ -141,9 +129,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     last_width = target_width;
                                 }
 
-                                scratch_buffer.copy_from_slice(&input_buffer[..fft_size]);
                                 let mut out_spectrum = fft.make_output_vec();
-
                                 if fft.process(&mut scratch_buffer, &mut out_spectrum).is_ok() {
                                     let mut current_freqs = vec![0.0; target_width];
                                     for (i, &(s_idx, e_idx, pct_s)) in
@@ -159,6 +145,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                             energy /= chunk.len() as f32;
                                             energy *= 1.0 + (ui.cava_tilt * pct_s);
                                         }
+
                                         if energy < ui.cava_noise_gate {
                                             energy = 0.0;
                                         }
@@ -169,6 +156,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                         } else {
                                             ui.cava_sensitivity_high
                                         };
+
                                         current_freqs[i] =
                                             (energy * zone_sens).powf(ui.cava_exponent).min(1.0);
                                     }
@@ -178,37 +166,36 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     }
                                 }
                             } else {
-                                // Тишина в звуке
+                                // Если в блоке тишина — зануляем выход
                                 if let Ok(mut out) = output.try_lock() {
                                     if out.iter().any(|&v| v > 0.0) {
-                                        crate::logger::log(
-                                            "ANALYZER: Silence detected, clearing bars",
-                                        );
                                         out.fill(0.0);
                                     }
                                 }
                             }
                         }
-                        input_buffer.clear();
+
+                        // 4. СДВИГАЕМ ОКНО: Удаляем ровно один обработанный блок
+                        // Это и есть та самая оптимизация под размер FFT
+                        input_buffer.drain(..fft_size);
                     }
                 }
                 Ok(Option::None) => {
-                    crate::logger::log("ANALYZER: Channel closed, exiting task");
+                    crate::logger::log("ANALYZER: RX closed, thread exit");
                     break;
                 }
                 Err(_) => {
-                    // Сюда заходим только на паузе/стопе
+                    // Таймаут (пауза): обнуляем визуализацию
                     if let Ok(mut out) = output.try_lock() {
                         if out.iter().any(|&v| v > 0.0) {
-                            crate::logger::log("ANALYZER: Timeout (No data), clearing bars");
+                            crate::logger::log("ANALYZER: Timeout (Silence), clearing bars");
                             out.fill(0.0);
                         }
                     }
                     input_buffer.clear();
                 }
             }
-
-            // Отдаем управление, чтобы не блокировать поток
+            // Даем другим корутинам поработать
             tokio::task::yield_now().await;
         }
     });

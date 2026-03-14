@@ -74,41 +74,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut log_empty_sent = false;
 
     // --- Настройка FPS ---
+    // --- Настройка FPS ---
     let mut last_tick = Instant::now();
-    let tick_rate = Duration::from_millis(16); // 60 кадров в секунду для плавности CAVA
+    let tick_rate = Duration::from_millis(16); // 60 FPS
+
+    crate::logger::log("MAIN: Entering main loop");
 
     loop {
-        // Отрисовка
+        // 1. Считаем, нужно ли нам рисовать кадр
+        let is_paused = engine.is_paused().await;
+
+        // Рисуем всегда, ЕСЛИ не на паузе (нужна анимация CAVA)
+        // ИЛИ если только что произошло событие.
         terminal.draw(|f| {
             let size = f.area();
             crate::tui::main_tab::draw_main_layout(f, size, &engine);
         })?;
 
-        // Считаем время ожидания до следующего кадра (FPS затвор)
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or(Duration::from_secs(0));
+        // 2. Считаем время ожидания
+        let elapsed = last_tick.elapsed();
+        let timeout = if elapsed >= tick_rate {
+            Duration::from_millis(0)
+        } else {
+            tick_rate - elapsed
+        };
 
-        // Опрос событий (теперь не блокирует отрисовку намертво)
+        // 3. Опрос событий
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
+                // crate::logger::log(&format!("MAIN: Key Event: {:?}", key.code));
                 if !crate::input::handle_input(&engine, key).await {
+                    crate::logger::log("MAIN: Exit requested via input");
                     break;
                 }
             }
         }
 
-        // Логика по таймеру
+        // 4. Логика по таймеру (обновление тика)
         if last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
 
+            // Проверка состояния движка (раз в 16мс)
             if engine.is_empty().await {
                 if !log_empty_sent {
-                    crate::logger::log("Audio engine is idle (queue empty)");
+                    crate::logger::log("MAIN: Engine idle");
                     log_empty_sent = true;
                 }
             } else {
                 log_empty_sent = false;
+            }
+
+            // Если мы на паузе, можем принудительно "замедлить" цикл,
+            // чтобы не долбить terminal.draw вхолостую.
+            if is_paused {
+                // Даем процессору отдохнуть чуть дольше на паузе
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
     }
