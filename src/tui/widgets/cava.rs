@@ -4,11 +4,15 @@ use ratatui::{
     style::Color,
 };
 
+use std::sync::{Mutex, OnceLock};
+static PREV_LEVELS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
+
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
     let ui = &conf.ui;
 
-    if area.height < 2 || frequencies.is_empty() {
+    // Убрали frequencies.is_empty(), чтобы он мог рисовать падение на паузе
+    if area.height < 2 {
         return;
     }
 
@@ -18,7 +22,6 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     });
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
-
     let symbols = ["▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let main_color = Color::Rgb(
         ui.colors.buttons[0],
@@ -27,22 +30,33 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     );
     let buffer = f.buffer_mut();
 
-    // Считаем, сколько всего столбиков (2 символа + 1 пробел) влезет в ширину
     let num_bars = width / 3;
     if num_bars == 0 {
         return;
     }
 
+    let prev_levels_mutex = PREV_LEVELS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut prev_levels = prev_levels_mutex.lock().unwrap();
+    if prev_levels.len() != num_bars {
+        prev_levels.resize(num_bars, 0.0);
+    }
+
     for i in 0..num_bars {
-        // РАСПРЕДЕЛЕНИЕ:
-        // Масштабируем индекс так, чтобы i=0 брал frequencies[0],
-        // а последний столбик i=(num_bars-1) брал самый конец массива frequencies.
         let freq_idx = (i * frequencies.len()) / num_bars;
-        let val = frequencies.get(freq_idx).cloned().unwrap_or(0.0);
+        let target_val = frequencies.get(freq_idx).cloned().unwrap_or(0.0);
 
-        // Позиция на экране
+        // Падение: берем максимум между новым значением и "упавшим" старым
+        let prev = prev_levels[i];
+        let val = if target_val > prev {
+            // Плавный взлет (атака)
+            prev + (target_val - prev) * ui.cava_attack
+        } else {
+            // Плавное падение (fall_speed)
+            (prev * ui.cava_fall_speed).max(0.0)
+        };
+        prev_levels[i] = val;
+
         let x_pos = i * 3;
-
         let total_levels = (val * height as f32 * 8.0) as usize;
         let full_blocks = total_levels / 8;
         let partial_level = total_levels % 8;
@@ -52,7 +66,6 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
             if cell_y < inner_area.top() {
                 break;
             }
-
             let sym = if y < full_blocks {
                 "█"
             } else if y == full_blocks && partial_level > 0 {
@@ -63,7 +76,6 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
                 break;
             };
 
-            // Отрисовка "двойного" столбика
             for offset in 0..2 {
                 let cell_x = inner_area.left() + (x_pos + offset) as u16;
                 if cell_x < inner_area.right() {

@@ -82,10 +82,10 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
         );
     }
     
-    let freqs = if let Ok(data) = engine.cava_data.try_lock() {
-        data.clone()
-    } else {
-        vec![0.0; 128] // Создаем дефолтный вектор прямо здесь, если мьютекс занят
+    let data_guard = engine.cava_data.try_lock();
+    let freqs = match data_guard {
+        Ok(ref data) => data,
+        Err(_) => &vec![0.0; 128], // Временный вектор для заглушки
     };
     
     // --- ВЫЗОВ ВИДЖЕТОВ ---
@@ -93,5 +93,5 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
     search::draw_search_widget(f, top_parts[0]);
     library::draw_library_widget(f, top_parts[1]); 
     logo::draw_rmpt_logo(f, top_parts[1]);
-    cava::draw_cava_widget(f, root[1], &freqs);
+    cava::draw_cava_widget(f, root[1], freqs);
 }

@@ -51,8 +51,7 @@ impl AudioEngine {
             cava_data,
         };
 
-        // Мы возвращаем rx для main.rs, чтобы там не было ошибок неиспользуемой переменной,
-        // но анализатор уже запущен внутри.
+        // Возвращаем dummy_rx, чтобы сигнатура совпадала с твоим main.rs
         let (_, dummy_rx) = mpsc::channel(1);
         (engine, dummy_rx)
     }
@@ -60,6 +59,8 @@ impl AudioEngine {
     pub async fn play(&self, path: &str) -> (String, String) {
         let path_str = path.to_string();
         let player_lock = self.player.clone();
+
+        // Оптимизация: получаем инфу о треке в блокирующем потоке, чтобы UI не висел
         let (artist, title, _, channels) = self.get_audio_info(&path_str).await;
         let viz_tx = self.viz_tx.clone();
 
@@ -82,25 +83,24 @@ impl AudioEngine {
                 let p = player_lock.lock().await;
                 p.stop();
 
-                // Оборачиваем наш источник (Opus или Symphonia)
+                // Оборачиваем источник для визуализации
                 let visual_src = VisualizableSource {
                     input: src,
-                    sender: viz_tx.clone(), // Клонируем Sender для канала CAVA
+                    sender: viz_tx.clone(),
                 };
 
                 p.append(visual_src);
                 p.play();
             }
         });
+
         (artist, title)
     }
 
-    // Исправлено: добавлен метод is_empty
     pub async fn is_empty(&self) -> bool {
         self.player.lock().await.empty()
     }
 
-    // Исправлено: добавлен метод seek_to
     pub async fn seek_to(&self, seconds: u64) {
         let p = self.player.lock().await;
         let _ = p.try_seek(Duration::from_secs(seconds));
@@ -121,54 +121,72 @@ impl AudioEngine {
     pub async fn pause(&self) {
         self.player.lock().await.pause();
     }
+
     pub async fn resume(&self) {
         self.player.lock().await.play();
     }
+
     pub async fn set_volume(&self, vol: f32) {
         let v = vol.clamp(0.0, 1.0);
-        // Экспонента, которая плавно растет по всей длине.
-        // На 0.05 будет еле слышно, на 0.5 — среднее, на 1.0 — максимум.
         let calibrated = (f32::exp(v * 5.0) - 1.0) / (f32::exp(5.0) - 1.0);
         self.player.lock().await.set_volume(calibrated);
     }
+
     pub async fn get_volume(&self) -> f32 {
         let gain = self.player.lock().await.volume();
-        if gain <= 0.0 { return 0.0; }
-        // Обратная функция (натуральный логарифм)
+        if gain <= 0.0 {
+            return 0.0;
+        }
         (f32::ln(gain * (f32::exp(5.0) - 1.0) + 1.0) / 5.0).clamp(0.0, 1.0)
     }
+
     pub async fn get_current_pos(&self) -> u64 {
         self.player.lock().await.get_pos().as_secs()
     }
+
     pub async fn is_paused(&self) -> bool {
         self.player.lock().await.is_paused()
     }
 
     async fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
-        let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
-        if let Ok(probe) = Probe::open(path) {
-            if let Ok(tagged_file) = probe.read() {
-                if let Some(t) = tagged_file
-                    .primary_tag()
-                    .or_else(|| tagged_file.first_tag())
-                {
-                    let (artist, title) = crate::parser::artist::process_and_log_metadata(
-                        t.artist().map(|s| s.to_string()),
-                        t.title().map(|s| s.to_string()),
-                        t.album().map(|s| s.to_string()),
-                        t.get_string(ItemKey::Year).map(|s| s.to_string()),
-                        t.genre().map(|s| s.to_string()),
-                        t.get_string(ItemKey::Comment).map(|s| s.to_string()),
-                    )
-                    .await;
-                    info.0 = artist;
-                    info.1 = title;
+        let path_owned = path.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
+
+            if let Ok(probe) = Probe::open(&path_owned) {
+                if let Ok(tagged_file) = probe.read() {
+                    let props = tagged_file.properties();
+                    let sample_rate = props.sample_rate().unwrap_or(48000);
+                    let channels = props.channels().map(|c| c as u16).unwrap_or(2);
+
+                    if let Some(t) = tagged_file
+                        .primary_tag()
+                        .or_else(|| tagged_file.first_tag())
+                    {
+                        // ВОТ ТУТ МЫ ВОЗВРАЩАЕМ ТВОЙ ПАРСЕР
+                        // Поскольку функция в парсере async, а мы в блокирующем потоке,
+                        // используем Handle, чтобы вызвать её.
+                        let rt = tokio::runtime::Handle::current();
+                        let (artist, title) =
+                            rt.block_on(crate::parser::artist::process_and_log_metadata(
+                                t.artist().map(|s| s.to_string()),
+                                t.title().map(|s| s.to_string()),
+                                t.album().map(|s| s.to_string()),
+                                t.get_string(ItemKey::Year).map(|s| s.to_string()),
+                                t.genre().map(|s| s.to_string()),
+                                t.get_string(ItemKey::Comment).map(|s| s.to_string()),
+                            ));
+
+                        info = (artist, title, sample_rate, channels);
+                    } else {
+                        info = ("Unknown".into(), "Unknown".into(), sample_rate, channels);
+                    }
                 }
-                let props = tagged_file.properties();
-                info.2 = props.sample_rate().unwrap_or(48000);
-                info.3 = props.channels().map(|c| c as u16).unwrap_or(2);
             }
-        }
-        info
+            info
+        })
+        .await
+        .unwrap_or(("Unknown".to_string(), "Unknown".to_string(), 48000, 2))
     }
 }

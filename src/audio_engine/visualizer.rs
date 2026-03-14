@@ -47,29 +47,53 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.input.next()?;
-        let _ = self.sender.try_send(sample.into());
+        let val: f32 = sample.into();
+
+        // ЖЕЛЕЗНАЯ ЗАСЛОНКА:
+        // Если сигнал тише порога, мы ПУСКАЕМ его в динамики (чтобы звук был чистым),
+        // но НЕ ШЛЕМ в анализатор. Анализатор будет спать на recv().
+        if val.abs() > 0.005 {
+            let _ = self.sender.try_send(val);
+        }
+
         Some(sample)
     }
 }
 
 pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
     tokio::spawn(async move {
-        let fft_size = 2048; // Для еще большей четкости баса можно поставить 4096
+        let fft_size = 2048;
         let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(fft_size);
+
         let mut input_buffer = Vec::with_capacity(fft_size);
+        let mut scratch_buffer = vec![0.0f32; fft_size];
         let mut prev_freqs = Vec::new();
         let sample_rate = 48000.0;
+        let mut cached_indices: Vec<(usize, usize, f32)> = Vec::new();
+        let mut last_width = 0;
+
+        // Флаг, чтобы не спамить нулями в output постоянно во время паузы
+        let mut is_sleeping = false;
 
         loop {
+            // Если работы нет (буфер пуст), встаем намертво и ждем звук
+            if input_buffer.is_empty() {
+                while let Some(sample) = rx.recv().await {
+                    if sample.abs() > 0.0001 {
+                        input_buffer.push(sample);
+                        is_sleeping = false; // Проснулись
+                        break;
+                    }
+                }
+            }
+
             let conf = crate::config::config::Config::global();
             let ui = &conf.ui;
-
-            // Узнаем, сколько столбиков от нас хочет виджет
             let target_width = if let Ok(out) = output.try_lock() {
                 out.len()
             } else {
-                0 // Если занято, просто пропустим этот шаг
+                0
             };
 
             if target_width == 0 {
@@ -77,59 +101,48 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                 continue;
             }
 
-            // Подгоняем буфер инерции под текущую ширину
-            if prev_freqs.len() != target_width {
+            // Пересчет индексов (твой код без изменений)
+            if target_width != last_width {
+                cached_indices.clear();
+                let f_min = 20.0f32;
+                let f_max = 15000.0f32;
+                let ratio = f_max / f_min;
+                let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
+                for i in 0..target_width {
+                    let pct_s = i as f32 / target_width as f32;
+                    let pct_e = (i + 1) as f32 / target_width as f32;
+                    let s_idx = get_idx(f_min * ratio.powf(pct_s));
+                    let e_idx = get_idx(f_min * ratio.powf(pct_e)).max(s_idx + 1);
+                    cached_indices.push((s_idx, e_idx, pct_s));
+                }
                 prev_freqs.resize(target_width, 0.0);
+                last_width = target_width;
             }
 
-            match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            // Ждем данные. Таймаут 100мс — этого за глаза хватит, чтобы понять, что музыка кончилась
+            match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
                 Ok(Some(sample)) => {
                     input_buffer.push(sample);
-
                     if input_buffer.len() >= fft_size {
                         let mut out_spectrum = fft.make_output_vec();
-                        let mut indata = input_buffer.clone();
+                        scratch_buffer.copy_from_slice(&input_buffer[..fft_size]);
 
-                        if fft.process(&mut indata, &mut out_spectrum).is_ok() {
+                        if fft.process(&mut scratch_buffer, &mut out_spectrum).is_ok() {
                             let mut current_freqs = vec![0.0; target_width];
-                            let get_idx = |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
-
-                            for i in 0..target_width {
-                                let f_min: f32 = 20.0;
-                                let f_max: f32 = 15000.0;
-                                let pct_s = i as f32 / target_width as f32;
-                                let pct_e = (i + 1) as f32 / target_width as f32;
-
-                                let ratio: f32 = f_max / f_min;
-                                let start_hz = f_min * ratio.powf(pct_s);
-                                let end_hz = f_min * ratio.powf(pct_e);
-
-                                let s_idx = get_idx(start_hz);
-                                let e_idx = get_idx(end_hz).max(s_idx + 1);
-
+                            for (i, &(s_idx, e_idx, pct_s)) in cached_indices.iter().enumerate() {
                                 let mut energy = 0.0;
-                                let chunk = &out_spectrum[s_idx..e_idx.min(out_spectrum.len())];
-
-                                if !chunk.is_empty() {
+                                let chunk_end = e_idx.min(out_spectrum.len());
+                                if s_idx < chunk_end {
+                                    let chunk = &out_spectrum[s_idx..chunk_end];
                                     for bin in chunk {
                                         energy += bin.norm();
                                     }
-                                    // 1. УСРЕДНЯЕМ. Теперь энергия не зависит от того, 10 там бинов или 100.
                                     energy /= chunk.len() as f32;
-
-                                    // 2. МЯГКАЯ КОРРЕКЦИЯ. Вместо умножения на 7.0, используем логарифм.
-                                    // Это подтянет высокие, но не даст им взорваться.
-                                    let weight = 1.0;
-                                    energy *= weight;
-
                                     energy *= 1.0 + (ui.cava_tilt * pct_s);
                                 }
-
                                 if energy < ui.cava_noise_gate {
                                     energy = 0.0;
                                 }
-
-                                // Твои зоны
                                 let zone_sens = if i < target_width / 3 {
                                     ui.cava_sensitivity_low
                                 } else if i < (target_width * 2) / 3 {
@@ -138,42 +151,10 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     ui.cava_sensitivity_high
                                 };
 
-                                // 3. ФИНАЛЬНЫЙ РАСЧЕТ.
-                                // Если всё еще слишком громко — просто уменьши чувствительность в конфиге до 1.0
-                                let mut val = (energy * zone_sens).powf(ui.cava_exponent);
-
-                                // Мягкий ограничитель (не дает "бетона", просто плавно тормозит у края)
-                                if val > 1.0 {
-                                    val = 1.0;
-                                }
-
-                                let prev = prev_freqs[i];
-                                if val > prev {
-                                    current_freqs[i] = prev + (val - prev) * ui.cava_attack;
-                                } else {
-                                    current_freqs[i] = prev * ui.cava_fall_speed;
-                                }
+                                current_freqs[i] =
+                                    (energy * zone_sens).powf(ui.cava_exponent).min(1.0);
                             }
 
-                            // 4. СКЛЕЙКА (Smoothing)
-                            let mut final_freqs = current_freqs.clone();
-                            for i in 1..target_width - 1 {
-                                final_freqs[i] = (current_freqs[i - 1] * 0.25)
-                                    + (current_freqs[i] * 0.5)
-                                    + (current_freqs[i + 1] * 0.25);
-                            }
-                            current_freqs = final_freqs;
-
-                            // Пост-сглаживание (Плавность)
-                            let mut final_freqs = current_freqs.clone();
-                            for i in 1..target_width - 1 {
-                                final_freqs[i] = (current_freqs[i - 1] * 0.25)
-                                    + (current_freqs[i] * 0.5)
-                                    + (current_freqs[i + 1] * 0.25);
-                            }
-                            current_freqs = final_freqs;
-
-                            prev_freqs = current_freqs.clone();
                             if let Ok(mut out) = output.try_lock() {
                                 *out = current_freqs;
                             }
@@ -181,14 +162,16 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                         input_buffer.clear();
                     }
                 }
-                Ok(None) => break,
-                Err(_) => {
-                    let fall = crate::config::config::Config::global().ui.cava_fall_speed;
-                    for i in 0..target_width {
-                        prev_freqs[i] *= fall;
-                    }
-                    if let Ok(mut out) = output.try_lock() {
-                        *out = prev_freqs.clone();
+                _ => {
+                    // Если таймаут случился и мы еще не «спим»
+                    if !is_sleeping {
+                        if let Ok(mut out) = output.try_lock() {
+                            let len = out.len();
+                            // Шлем нули ровно один раз, чтобы виджет запустил анимацию падения
+                            *out = vec![0.0; len];
+                        }
+                        is_sleeping = true;
+                        input_buffer.clear(); // Очистка заставляет loop уйти в rx.recv().await
                     }
                 }
             }

@@ -7,6 +7,7 @@ mod tui;
 
 use crate::audio_engine::engine::AudioEngine;
 use crossterm::{
+    cursor::{Hide, Show},
     event::{self, Event},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -14,44 +15,29 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::env;
 use std::io;
+use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Сначала инициализируем конфиг и проверяем его на вшивость
     let _ = crate::config::config::Config::global();
 
     if let Some(err) = crate::config::config::Config::get_last_error() {
-        // Если конфиг битый — СРАЗУ ГОВОРИМ ОБ ЭТОМ И ВЫХОДИМ
-        // Не заходим в TUI, не портим терминал
         eprintln!("\x1b[31;1m[FATAL] Ошибка в конфигурации:\x1b[0m");
         eprintln!("\x1b[33m{}\x1b[0m", err);
-
-        // Пишем в логгер и сбрасываем на диск перед выходом
         crate::logger::log(&format!("FATAL: Config error: {}", err));
         crate::logger::final_flush().await;
-
         std::process::exit(1);
     }
 
-    // 1. Паник-хендлер (по твоему плану)
+    // Паник-хендлер
     std::panic::set_hook(Box::new(|info| {
-        // 1. Восстанавливаем терминал сразу
-        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = disable_raw_mode();
         let mut stdout = std::io::stdout();
-        let _ = crossterm::execute!(
-            stdout,
-            crossterm::terminal::LeaveAlternateScreen,
-            crossterm::cursor::Show
-        );
-
-        // 2. Печатаем в консоль
+        let _ = execute!(stdout, LeaveAlternateScreen, Show);
         eprintln!("\n\x1b[31;1m[FATAL ERROR]:\x1b[0m {}\n", info);
-
-        // 3. Сбрасываем кэш СИНХРОННО
         crate::logger::emergency_flush(info);
     }));
 
-    // 2. Аргументы теперь опциональны
     let args: Vec<String> = env::args().skip(1).collect();
     let initial_path = if !args.is_empty() {
         let path = args.join(" ");
@@ -64,39 +50,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // 3. Входим в TUI сразу
+    // --- Инициализация терминала ---
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+
+    // 1. Входим в альт-экран и прячем курсор
+    execute!(stdout, EnterAlternateScreen, Hide)?;
+
+    // 2. ВЫКЛЮЧАЕМ ТОЛЬКО ВЫДЕЛЕНИЕ ТЕКСТА
+    // Эти коды вырубают стандартное выделение мышкой в большинстве терминалов
+    // при этом сама мышь (клики) может быть использована кодом, если надо.
+    print!("\x1b[?1000l\x1b[?1003l");
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 4. Инициализация движка (он в спячке, пока не позовем play)
     let (engine, _rx) = AudioEngine::new();
 
-    // Если путь всё-таки передали и он валидный — запускаем
     if let Some(path) = initial_path {
         engine.play(&path).await;
     }
 
     let mut log_empty_sent = false;
 
-    // 5. Главный цикл
-    loop {
-        let conf = crate::config::config::Config::global();
-        let tick_rate = std::time::Duration::from_millis(conf.ui.cava_update_ms);
+    // --- Настройка FPS ---
+    let mut last_tick = Instant::now();
+    let tick_rate = Duration::from_millis(16); // 60 кадров в секунду для плавности CAVA
 
+    loop {
+        // Отрисовка
         terminal.draw(|f| {
             let size = f.area();
             crate::tui::main_tab::draw_main_layout(f, size, &engine);
         })?;
 
-        if event::poll(tick_rate)? {
+        // Считаем время ожидания до следующего кадра (FPS затвор)
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or(Duration::from_secs(0));
+
+        // Опрос событий (теперь не блокирует отрисовку намертво)
+        if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if !crate::input::handle_input(&engine, key).await {
                     break;
                 }
             }
+        }
+
+        // Логика по таймеру
+        if last_tick.elapsed() >= tick_rate {
+            last_tick = Instant::now();
 
             if engine.is_empty().await {
                 if !log_empty_sent {
@@ -109,16 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if let Some(err) = crate::config::config::Config::get_last_error() {
-        println!("\x1b[31;1m[!] Ошибки конфига при запуске:\x1b[0m");
-        println!("\x1b[33m{}\x1b[0m", err);
-    }
-
-    // 6. Финал
+    // --- Выход ---
     logger::final_flush().await;
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, Show)?;
 
     Ok(())
 }
