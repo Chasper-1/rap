@@ -87,22 +87,22 @@ fn match_cfg(code: KeyCode, keys: &[String], action_label: &str) -> bool {
     let is_match = keys.iter().any(|key_name| {
         let s = key_name.trim().to_lowercase();
 
-        // 1. Проверяем спец-клавиши (Home, Enter, etc.) через отладочный вывод
-        let code_str = format!("{:?}", code).to_lowercase();
-        if code_str == s {
-            return true;
+        match code {
+            // Если нажата обычная клавиша (буква/цифра)
+            KeyCode::Char(c) => {
+                let actual = c.to_lowercase().to_string();
+                actual == s || (s == "space" && c == ' ')
+            }
+            // Если нажата спец-клавиша (Home, Enter, Up...)
+            _ => {
+                let code_str = format!("{:?}", code).to_lowercase();
+                code_str == s
+            }
         }
-
-        // 2. Проверяем обычные символы (буквы, цифры)
-        if let KeyCode::Char(actual) = code {
-            let actual_s = actual.to_lowercase().to_string();
-            return actual_s == s;
-        }
-
-        false
     });
 
     if is_match {
+        // Мы логируем это, чтобы ты видел в логах: нажатие дошло!
         crate::logger::log(&format!("MATCH: {:?} matches {}", code, action_label));
     }
     is_match

@@ -60,13 +60,15 @@ impl AudioEngine {
                 logger::log(&format!("ENGINE: Using device {}", desc));
             }
 
-            let stream = DeviceSinkBuilder::from_device(device)
+            let mut stream = DeviceSinkBuilder::from_device(device)
                 .expect("Failed to create SinkBuilder")
                 .with_sample_rate(NonZero::new(48000).unwrap())
                 .open_sink_or_fallback()
                 .expect("System Error: Failed to open audio sink.");
 
-            // Убираем mut у плеера
+            // 1. Говорим ему не орать при закрытии
+            stream.log_on_drop(false);
+
             let player = Player::connect_new(stream.mixer());
             spawn_analyzer(viz_rx, cava_inner);
 

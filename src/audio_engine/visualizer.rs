@@ -49,9 +49,6 @@ where
         let sample = self.input.next()?;
         let val: f32 = sample.into();
 
-        // ЖЕЛЕЗНАЯ ЗАСЛОНКА:
-        // Если сигнал тише порога, мы ПУСКАЕМ его в динамики (чтобы звук был чистым),
-        // но НЕ ШЛЕМ в анализатор. Анализатор будет спать на recv().
         if val.abs() > 0.005 {
             let _ = self.sender.try_send(val);
         }
@@ -114,17 +111,36 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 if target_width != last_width {
                                     cached_indices.clear();
                                     let f_min = 20.0f32;
-                                    let f_max = 15000.0f32;
+                                    let f_max = 13000.0f32;
                                     let ratio = f_max / f_min;
+
                                     let get_idx =
                                         |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
+
                                     for i in 0..target_width {
                                         let pct_s = i as f32 / target_width as f32;
                                         let pct_e = (i + 1) as f32 / target_width as f32;
-                                        let s_idx = get_idx(f_min * ratio.powf(pct_s));
-                                        let e_idx =
-                                            get_idx(f_min * ratio.powf(pct_e)).max(s_idx + 1);
-                                        cached_indices.push((s_idx, e_idx, pct_s));
+
+                                        // 1. Используем нелинейное растягивание для низких частот (powf(1.5))
+                                        // Это "расталкивает" бас, чтобы он занимал больше палок слева
+                                        let s_idx = get_idx(f_min * ratio.powf(pct_s.powf(1.5)));
+                                        let mut e_idx =
+                                            get_idx(f_min * ratio.powf(pct_e.powf(1.5)));
+
+                                        // 2. ЖЕСТКОЕ УСЛОВИЕ: каждая следующая палка должна начинаться
+                                        // как минимум со следующего индекса FFT
+                                        if i > 0 {
+                                            let prev_e = cached_indices.last().unwrap().1;
+                                            if s_idx <= prev_e {
+                                                // Если новая палка хочет начать там же, где старая - двигаем её вперед
+                                                let new_s = prev_e;
+                                                e_idx = e_idx.max(new_s + 1);
+                                                cached_indices.push((new_s, e_idx, pct_s));
+                                                continue;
+                                            }
+                                        }
+
+                                        cached_indices.push((s_idx, e_idx.max(s_idx + 1), pct_s));
                                     }
                                     last_width = target_width;
                                 }

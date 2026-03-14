@@ -22,7 +22,7 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     });
     let width = inner_area.width as usize;
     let height = inner_area.height as usize;
-    let symbols = ["▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    let symbols = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let main_color = Color::Rgb(
         ui.colors.buttons[0],
         ui.colors.buttons[1],
@@ -69,9 +69,9 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
             let sym = if y < full_blocks {
                 "█"
             } else if y == full_blocks && partial_level > 0 {
-                symbols[(partial_level - 1).min(6)]
+                symbols[(partial_level - 1).min(7)]
             } else if y == 0 {
-                "▂"
+                "▁"
             } else {
                 break;
             };
