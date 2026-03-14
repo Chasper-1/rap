@@ -74,61 +74,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut log_empty_sent = false;
 
     // --- Настройка FPS ---
-    // --- Настройка FPS ---
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(16); // 60 FPS
-
     crate::logger::log("MAIN: Entering main loop");
+    let mut last_activity = Instant::now();
+    let mut needs_render = true; // Флаг для разовой отрисовки по событию
 
     loop {
-        // 1. Считаем, нужно ли нам рисовать кадр
         let is_paused = engine.is_paused().await;
+        let is_empty = engine.is_empty().await;
+        let poll_timeout = tick_rate.saturating_sub(last_tick.elapsed());
 
-        // Рисуем всегда, ЕСЛИ не на паузе (нужна анимация CAVA)
-        // ИЛИ если только что произошло событие.
-        terminal.draw(|f| {
-            let size = f.area();
-            crate::tui::main_tab::draw_main_layout(f, size, &engine);
-        })?;
+        // 1. УСЛОВИЕ ЖИВОЙ АНИМАЦИИ
+        // Если играет — мы активны. Если только что поставили на паузу — активны еще 2 сек.
+        let is_animating = !is_paused && !is_empty;
+        if is_animating {
+            last_activity = Instant::now();
+        }
 
-        // 2. Считаем время ожидания
-        let elapsed = last_tick.elapsed();
-        let timeout = if elapsed >= tick_rate {
-            Duration::from_millis(0)
-        } else {
-            tick_rate - elapsed
-        };
+        // 2. РЕШАЕМ: РИСОВАТЬ ИЛИ НЕТ?
+        // Рисуем если: идет анимация ИЛИ мы в окне затухания (2 сек) ИЛИ флаг принудительной отрисовки
+        let should_render =
+            is_animating || last_activity.elapsed() < Duration::from_secs(2) || needs_render;
 
-        // 3. Опрос событий
-        if event::poll(timeout)? {
+        // 3. ОПРОС СОБЫТИЙ
+        if event::poll(poll_timeout)? {
             if let Event::Key(key) = event::read()? {
-                // crate::logger::log(&format!("MAIN: Key Event: {:?}", key.code));
+                needs_render = true; // Нажали кнопку — надо перерисовать интерфейс
                 if !crate::input::handle_input(&engine, key).await {
-                    crate::logger::log("MAIN: Exit requested via input");
                     break;
                 }
             }
         }
 
-        // 4. Логика по таймеру (обновление тика)
+        // 4. ИСПОЛНЕНИЕ
+        if should_render {
+            terminal.draw(|f| {
+                let size = f.area();
+                crate::tui::main_tab::draw_main_layout(f, size, &engine);
+            })?;
+            needs_render = false; // Отрисовали — сбросили флаг
+        } else {
+            // ВОТ ТУТ ОН ЗАТЫКАЕТСЯ.
+            // Если анимации нет и 2 секунды прошли — спим глубоко.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Таймер тиков (стандартно)
         if last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
 
-            // Проверка состояния движка (раз в 16мс)
-            if engine.is_empty().await {
+            if is_empty {
                 if !log_empty_sent {
                     crate::logger::log("MAIN: Engine idle");
                     log_empty_sent = true;
                 }
             } else {
                 log_empty_sent = false;
-            }
-
-            // Если мы на паузе, можем принудительно "замедлить" цикл,
-            // чтобы не долбить terminal.draw вхолостую.
-            if is_paused {
-                // Даем процессору отдохнуть чуть дольше на паузе
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
     }
