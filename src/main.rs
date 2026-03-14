@@ -81,8 +81,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut needs_render = true; // Флаг для разовой отрисовки по событию
 
     loop {
-        let is_paused = engine.is_paused().await;
-        let is_empty = engine.is_empty().await;
+        let is_paused = engine.is_paused();
+        let is_empty = engine.is_empty();
         let poll_timeout = tick_rate.saturating_sub(last_tick.elapsed());
 
         // 1. УСЛОВИЕ ЖИВОЙ АНИМАЦИИ

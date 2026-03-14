@@ -14,14 +14,14 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
         crate::logger::log("INPUT: Exiting...");
         return false;
     }
-    
-    let mut current_volume = engine.get_volume().await;
+
+    let mut current_volume = engine.get_volume();
 
     // 2. ДЕЙСТВИЯ
     match key {
         // ПАУЗА
         k if match_cfg(k, &cfg.toggle_pause, "PAUSE") => {
-            if engine.is_paused().await {
+            if engine.is_paused() {
                 engine.resume().await;
                 crate::logger::log("AUDIO: Resumed");
             } else {
@@ -50,7 +50,7 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
             crate::logger::log(&format!("INPUT: Seek {:+}s", step));
             engine.seek_relative(step).await;
 
-            let pos = engine.get_current_pos().await;
+            let pos = engine.get_current_pos();
             crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
 
@@ -61,12 +61,18 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
             crate::logger::log(&format!("INPUT: Seek {:+}s", step));
             engine.seek_relative(step).await;
 
-            let pos = engine.get_current_pos().await;
+            let pos = engine.get_current_pos();
             crate::logger::log(&format!("AUDIO: Position {}s", pos));
         }
 
-        // СБРОС (Home / 0)
-        KeyCode::Home | KeyCode::Char('0') => {
+        // СТОП (Выгрузка трека)
+        k if match_cfg(k, &cfg.stop, "STOP") => {
+            engine.stop().await;
+            crate::logger::log("AUDIO: Stopped and Cleared");
+        }
+
+        // СБРОС (Перемотка в 0)
+        k if match_cfg(k, &cfg.seek_start, "SEEK_START") => {
             engine.seek_to(0).await;
             crate::logger::log("AUDIO: Reset to start");
         }
@@ -77,33 +83,23 @@ pub async fn handle_input(engine: &AudioEngine, event: KeyEvent) -> bool {
     true
 }
 
-/// Сверяет KeyCode со списком строк из конфига
 fn match_cfg(code: KeyCode, keys: &[String], action_label: &str) -> bool {
     let is_match = keys.iter().any(|key_name| {
         let s = key_name.trim().to_lowercase();
-        match s.as_str() {
-            "space" | " " => code == KeyCode::Char(' '),
-            "up" => code == KeyCode::Up,
-            "down" => code == KeyCode::Down,
-            "left" => code == KeyCode::Left,
-            "right" => code == KeyCode::Right,
-            "enter" => code == KeyCode::Enter,
-            "esc" => code == KeyCode::Esc,
-            "home" => code == KeyCode::Home,
-            "+" | "=" => code == KeyCode::Char('+') || code == KeyCode::Char('='),
-            "-" | "_" => code == KeyCode::Char('-') || code == KeyCode::Char('_'),
 
-            // Если в массиве строка из 1 символа (буква/цифра)
-            _ if s.chars().count() == 1 => {
-                let target = s.chars().next().unwrap();
-                if let KeyCode::Char(actual) = code {
-                    actual.to_lowercase().next() == Some(target)
-                } else {
-                    false
-                }
-            }
-            _ => false,
+        // 1. Проверяем спец-клавиши (Home, Enter, etc.) через отладочный вывод
+        let code_str = format!("{:?}", code).to_lowercase();
+        if code_str == s {
+            return true;
         }
+
+        // 2. Проверяем обычные символы (буквы, цифры)
+        if let KeyCode::Char(actual) = code {
+            let actual_s = actual.to_lowercase().to_string();
+            return actual_s == s;
+        }
+
+        false
     });
 
     if is_match {

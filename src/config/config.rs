@@ -17,6 +17,8 @@ pub struct Config {
 pub struct InputConfig {
     pub quit: Vec<String>,
     pub toggle_pause: Vec<String>,
+    pub stop: Vec<String>,
+    pub seek_start: Vec<String>,
     pub vol_up: Vec<String>,
     pub vol_down: Vec<String>,
     pub forward: Vec<String>,
@@ -153,6 +155,8 @@ impl Config {
             input: InputConfig {
                 quit: vec!["q".into(), "Esc".into()],
                 toggle_pause: vec!["Space".into()],
+                stop: vec!["Delete".into()],
+                seek_start: vec!["Home".into()],
                 vol_up: vec!["=".into(), "+".into()],
                 vol_down: vec!["-".into(), "_".into()],
                 forward: vec!["Right".into(), "f".into()],

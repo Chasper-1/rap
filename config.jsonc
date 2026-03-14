@@ -48,6 +48,8 @@
   "input": {
     "quit": ["q", "Esc"],
     "toggle_pause": ["Space", "p"],
+    "stop": ["Delete"],
+    "seek_start": ["Home"],
     "vol_up": ["+", "="],
     "vol_down": ["-", "_"],
     "forward": ["Right", "d"],
