@@ -100,14 +100,11 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                         };
 
                         if target_width > 0 {
-                            // Берем ровно 2048 сэмплов из начала буфера
                             scratch_buffer.copy_from_slice(&input_buffer[..fft_size]);
-
                             let max_amp = scratch_buffer.iter().fold(0.0f32, |m, x| m.max(x.abs()));
 
-                            // Считаем только если есть звук выше порога шума
                             if max_amp > 0.001 {
-                                // Ресайз кеша индексов (если ширина окна изменилась)
+                                // Кэширование индексов
                                 if target_width != last_width {
                                     cached_indices.clear();
                                     let f_min = 20.0f32;
@@ -115,12 +112,15 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     let ratio = f_max / f_min;
                                     let get_idx =
                                         |hz: f32| ((hz * fft_size as f32) / sample_rate) as usize;
+
                                     for i in 0..target_width {
                                         let pct_s = i as f32 / target_width as f32;
-                                        let pct_e = (i + 1) as f32 / target_width as f32;
                                         let s_idx = get_idx(f_min * ratio.powf(pct_s));
-                                        let e_idx =
-                                            get_idx(f_min * ratio.powf(pct_e)).max(s_idx + 1);
+                                        let e_idx = get_idx(
+                                            f_min
+                                                * ratio.powf((i + 1) as f32 / target_width as f32),
+                                        )
+                                        .max(s_idx + 1);
                                         cached_indices.push((s_idx, e_idx, pct_s));
                                     }
                                     last_width = target_width;
@@ -129,33 +129,39 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 let mut out_spectrum = fft.make_output_vec();
                                 if fft.process(&mut scratch_buffer, &mut out_spectrum).is_ok() {
                                     let mut current_freqs = vec![0.0; target_width];
+
                                     for (i, &(s_idx, e_idx, pct_s)) in
                                         cached_indices.iter().enumerate()
                                     {
                                         let mut energy = 0.0;
                                         let chunk_end = e_idx.min(out_spectrum.len());
+
                                         if s_idx < chunk_end {
                                             let chunk = &out_spectrum[s_idx..chunk_end];
                                             for bin in chunk {
                                                 energy += bin.norm();
                                             }
                                             energy /= chunk.len() as f32;
-                                            energy *= 1.0 + (ui.cava_tilt * pct_s);
                                         }
+
+                                        // --- ТВОЙ НОВЫЙ ЭКВАЛАЙЗЕР ---
+                                        // Разделяем всё строго на 3 зоны
+                                        let multiplier = if pct_s < 0.2 {
+                                            ui.eq_low // Прямое управление басом из JSON
+                                        } else if pct_s < 0.6 {
+                                            ui.eq_mid // Прямое управление серединой
+                                        } else {
+                                            ui.eq_high // Прямое управление высокими
+                                        };
+
+                                        energy *= multiplier * ui.cava_sensitivity;
+                                        // -----------------------------
 
                                         if energy < ui.cava_noise_gate {
                                             energy = 0.0;
                                         }
-                                        let zone_sens = if i < target_width / 3 {
-                                            ui.cava_sensitivity_low
-                                        } else if i < (target_width * 2) / 3 {
-                                            ui.cava_sensitivity_mid
-                                        } else {
-                                            ui.cava_sensitivity_high
-                                        };
 
-                                        current_freqs[i] =
-                                            (energy * zone_sens).powf(ui.cava_exponent).min(1.0);
+                                        current_freqs[i] = energy.powf(ui.cava_exponent).min(1.0);
                                     }
 
                                     if let Ok(mut out) = output.try_lock() {
@@ -163,7 +169,6 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                     }
                                 }
                             } else {
-                                // Если в блоке тишина — зануляем выход
                                 if let Ok(mut out) = output.try_lock() {
                                     if out.iter().any(|&v| v > 0.0) {
                                         out.fill(0.0);
@@ -171,9 +176,6 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                 }
                             }
                         }
-
-                        // 4. СДВИГАЕМ ОКНО: Удаляем ровно один обработанный блок
-                        // Это и есть та самая оптимизация под размер FFT
                         input_buffer.drain(..fft_size);
                     }
                 }
