@@ -2,8 +2,8 @@ use realfft::RealFftPlanner;
 use rodio::Source;
 use std::num::NonZero;
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{Receiver, Sender};
 
 pub struct VisualizableSource<S>
 where
@@ -31,8 +31,6 @@ where
     fn total_duration(&self) -> Option<std::time::Duration> {
         self.input.total_duration()
     }
-
-    // ВОТ ЭТОГО НЕ ХВАТАЛО: Прокидываем перемотку внутрь источника
     fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
         self.input.try_seek(pos)
     }
@@ -48,24 +46,24 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.input.next()?;
         let val: f32 = sample.into();
-
         if val.abs() > 0.005 {
-            let _ = self.sender.try_send(val);
+            let _ = self.sender.send(val);
         }
-
         Some(sample)
     }
 }
 
-pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
-    tokio::spawn(async move {
-        crate::logger::log("ANALYZER: Spawned successfully");
+/// Запускает анализатор в отдельном блокирующем потоке.
+/// Принимает синхронный Receiver и обновляет `output` (общий вектор для UI).
+pub fn spawn_analyzer(rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
+    std::thread::spawn(move || {
+        crate::logger::log("ANALYZER: Started in blocking thread");
 
         let fft_size = 2048;
         let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(fft_size);
 
-        let mut input_buffer = Vec::with_capacity(fft_size);
+        let mut input_buffer = Vec::with_capacity(fft_size * 4);
         let mut scratch_buffer = vec![0.0f32; fft_size];
         let mut last_width = 0;
         let mut cached_indices: Vec<(usize, usize, f32)> = Vec::new();
@@ -75,28 +73,23 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
         let ui = &conf.ui;
 
         loop {
-            // 1. Ждем данные. Тут поток СТРОГО спит, если в канале пусто.
-            let msg = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
-
-            match msg {
-                Ok(Some(sample)) => {
+            // Ждём данные с таймаутом 100 мс
+            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(sample) => {
                     input_buffer.push(sample);
-
-                    // 2. Выгребаем всё из канала в буфер за один раз
+                    // Выгребаем всё, что накопилось
                     while let Ok(s) = rx.try_recv() {
                         input_buffer.push(s);
-                        // Ограничиваем буфер, чтобы не сожрать всю память при лагах (4 кадра FFT)
                         if input_buffer.len() > fft_size * 4 {
                             break;
                         }
                     }
 
-                    // 3. ОБРАБОТКА: Пока в буфере хватает данных на целый блок FFT
                     while input_buffer.len() >= fft_size {
-                        let target_width = if let Ok(out) = output.try_lock() {
+                        let target_width = {
+                            // Синхронно блокируем мьютекс (tokio::sync::Mutex в синхронном коде)
+                            let out = output.blocking_lock();
                             out.len()
-                        } else {
-                            0
                         };
 
                         if target_width > 0 {
@@ -104,7 +97,7 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                             let max_amp = scratch_buffer.iter().fold(0.0f32, |m, x| m.max(x.abs()));
 
                             if max_amp > 0.001 {
-                                // Кэширование индексов
+                                // Кэширование индексов частот
                                 if target_width != last_width {
                                     cached_indices.clear();
                                     let f_min = 20.0f32;
@@ -144,58 +137,49 @@ pub fn spawn_analyzer(mut rx: Receiver<f32>, output: Arc<Mutex<Vec<f32>>>) {
                                             energy /= chunk.len() as f32;
                                         }
 
-                                        // --- ТВОЙ НОВЫЙ ЭКВАЛАЙЗЕР ---
-                                        // Разделяем всё строго на 3 зоны
                                         let multiplier = if pct_s < 0.2 {
-                                            ui.eq_low // Прямое управление басом из JSON
+                                            ui.eq_low
                                         } else if pct_s < 0.6 {
-                                            ui.eq_mid // Прямое управление серединой
+                                            ui.eq_mid
                                         } else {
-                                            ui.eq_high // Прямое управление высокими
+                                            ui.eq_high
                                         };
 
                                         energy *= multiplier * ui.cava_sensitivity;
-                                        // -----------------------------
-
                                         if energy < ui.cava_noise_gate {
                                             energy = 0.0;
                                         }
-
                                         current_freqs[i] = energy.powf(ui.cava_exponent).min(1.0);
                                     }
 
-                                    if let Ok(mut out) = output.try_lock() {
-                                        *out = current_freqs;
-                                    }
+                                    let mut out = output.blocking_lock();
+                                    *out = current_freqs;
                                 }
                             } else {
-                                if let Ok(mut out) = output.try_lock() {
-                                    if out.iter().any(|&v| v > 0.0) {
-                                        out.fill(0.0);
-                                    }
+                                // Тишина – обнуляем
+                                let mut out = output.blocking_lock();
+                                if out.iter().any(|&v| v > 0.0) {
+                                    out.fill(0.0);
                                 }
                             }
                         }
                         input_buffer.drain(..fft_size);
                     }
                 }
-                Ok(Option::None) => {
-                    crate::logger::log("ANALYZER: RX closed, thread exit");
-                    break;
-                }
-                Err(_) => {
-                    // Таймаут (пауза): обнуляем визуализацию
-                    if let Ok(mut out) = output.try_lock() {
-                        if out.iter().any(|&v| v > 0.0) {
-                            crate::logger::log("ANALYZER: Timeout (Silence), clearing bars");
-                            out.fill(0.0);
-                        }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Таймаут без данных – обнуляем визуализацию
+                    let mut out = output.blocking_lock();
+                    if out.iter().any(|&v| v > 0.0) {
+                        crate::logger::log("ANALYZER: Timeout (silence), clearing bars");
+                        out.fill(0.0);
                     }
                     input_buffer.clear();
                 }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    crate::logger::log("ANALYZER: Sender dropped, exiting");
+                    break;
+                }
             }
-            // Даем другим корутинам поработать
-            tokio::task::yield_now().await;
         }
     });
 }

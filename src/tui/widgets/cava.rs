@@ -3,15 +3,15 @@ use ratatui::{
     layout::{Margin, Rect},
     style::Color,
 };
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
-use std::sync::{Mutex, OnceLock};
 static PREV_LEVELS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
 
 pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
     let conf = crate::config::config::Config::global();
     let ui = &conf.ui;
 
-    // Убрали frequencies.is_empty(), чтобы он мог рисовать падение на паузе
     if area.height < 2 {
         return;
     }
@@ -35,8 +35,15 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
         return;
     }
 
+    // tokio::sync::Mutex требует асинхронного lock, но здесь у нас синхронный контекст.
+    // Используем block_in_place или просто попробуем взять блокировку.
+    // Так как отрисовка происходит в главном потоке tokio, можно использовать `try_lock()`.
     let prev_levels_mutex = PREV_LEVELS.get_or_init(|| Mutex::new(Vec::new()));
-    let mut prev_levels = prev_levels_mutex.lock().unwrap();
+    let mut prev_levels = match prev_levels_mutex.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => return, // Не удалось захватить, пропускаем кадр
+    };
+
     if prev_levels.len() != num_bars {
         prev_levels.resize(num_bars, 0.0);
     }
@@ -45,13 +52,10 @@ pub fn draw_cava_widget(f: &mut Frame, area: Rect, frequencies: &[f32]) {
         let freq_idx = (i * frequencies.len()) / num_bars;
         let target_val = frequencies.get(freq_idx).cloned().unwrap_or(0.0);
 
-        // Падение: берем максимум между новым значением и "упавшим" старым
         let prev = prev_levels[i];
         let val = if target_val > prev {
-            // Плавный взлет (атака)
             prev + (target_val - prev) * ui.cava_attack
         } else {
-            // Плавное падение (fall_speed)
             (prev * ui.cava_fall_speed).max(0.0)
         };
         prev_levels[i] = val;

@@ -7,8 +7,9 @@ use std::fs::File;
 use std::io::BufReader;
 use std::num::NonZero;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, mpsc as tokio_mpsc, watch};
 
 use lofty::prelude::*;
 use lofty::probe::Probe;
@@ -34,28 +35,34 @@ pub struct EngineStatus {
 }
 
 pub struct AudioEngine {
-    cmd_tx: mpsc::Sender<AudioCmd>,
+    cmd_tx: tokio_mpsc::Sender<AudioCmd>,
     status_rx: watch::Receiver<EngineStatus>,
+    shutdown_tx: watch::Sender<bool>,
     pub cava_data: Arc<Mutex<Vec<f32>>>,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AudioEngine {
-    pub fn new() -> (Self, mpsc::Receiver<f32>) {
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<AudioCmd>(64);
+    pub fn new() -> Self {
+        let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<AudioCmd>(64);
         let (status_tx, status_rx) = watch::channel(EngineStatus::default());
-        let (viz_tx, viz_rx) = mpsc::channel(1024 * 10);
-        let (_dummy_tx, dummy_rx) = mpsc::channel(1);
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+        // Синхронный канал для визуализации
+        let (viz_tx, viz_rx) = mpsc::channel::<f32>();
 
         let cava_data = Arc::new(Mutex::new(vec![0.0; 128]));
         let cava_inner = cava_data.clone();
 
-        tokio::spawn(async move {
+        // Запускаем анализатор в отдельном потоке ОС
+        spawn_analyzer(viz_rx, cava_inner);
+
+        let task_handle = tokio::spawn(async move {
             let host = rodio::cpal::default_host();
             let device = host
                 .default_output_device()
                 .expect("No output device found.");
 
-            // Заменяем name() на description() по просьбе компилятора
             if let Ok(desc) = device.description() {
                 logger::log(&format!("ENGINE: Using device {}", desc));
             }
@@ -66,14 +73,13 @@ impl AudioEngine {
                 .open_sink_or_fallback()
                 .expect("System Error: Failed to open audio sink.");
 
-            // 1. Говорим ему не орать при закрытии
             stream.log_on_drop(false);
 
             let player = Player::connect_new(stream.mixer());
-            spawn_analyzer(viz_rx, cava_inner);
 
             loop {
                 tokio::select! {
+                    // Команды от UI
                     Some(cmd) = cmd_rx.recv() => {
                         match cmd {
                             AudioCmd::Play { path, channels } => {
@@ -106,6 +112,15 @@ impl AudioEngine {
                             }
                         }
                     }
+                    // Сигнал завершения
+                    Ok(()) = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            logger::log("ENGINE: Shutdown signal received");
+                            player.stop();
+                            break;
+                        }
+                    }
+                    // Периодическое обновление статуса
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {
                         let _ = status_tx.send(EngineStatus {
                             position: player.get_pos(),
@@ -116,16 +131,17 @@ impl AudioEngine {
                     }
                 }
             }
+            // Даём время на освобождение аудиоустройства
+            tokio::time::sleep(Duration::from_millis(50)).await;
         });
 
-        (
-            Self {
-                cmd_tx,
-                status_rx,
-                cava_data,
-            },
-            dummy_rx,
-        )
+        Self {
+            cmd_tx,
+            status_rx,
+            shutdown_tx,
+            cava_data,
+            task_handle: Some(task_handle),
+        }
     }
 
     async fn prepare_source(path: &str, channels: u16) -> Option<Box<dyn Source + Send>> {
@@ -203,6 +219,14 @@ impl AudioEngine {
         let current = self.status_rx.borrow().position.as_secs_f64();
         let target = Duration::from_secs_f64((current + offset_secs as f64).max(0.0));
         let _ = self.cmd_tx.send(AudioCmd::Seek(target)).await;
+    }
+
+    /// Сигнализирует движку о завершении работы и ждёт его остановки.
+    pub async fn shutdown(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+        if let Some(handle) = self.task_handle.take() {
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        }
     }
 
     async fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
