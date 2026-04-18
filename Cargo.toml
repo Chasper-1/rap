@@ -1,11 +1,11 @@
 [package]
 name = "rap"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2024"
 
 [dependencies]
-rap-engine = { version = "0.1.0", path = "rap-engine" }
-tokio = { version = "1.50.0", features = ["full"] }
+rap-engine = { path = "rap-engine" }
+tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "time"] }
 
 
 [profile.release]

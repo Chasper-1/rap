@@ -1,7 +1,6 @@
 use super::commands::AudioCmd;
 use super::source_factory;
 use super::status::EngineStatus;
-use crate::audio_engine::visualizer::{VisualizableSource, VisualizerSettings, spawn_analyzer};
 
 use std::num::NonZero;
 use std::sync::Arc;
