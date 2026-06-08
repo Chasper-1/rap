@@ -7,7 +7,6 @@ static CONFIG_ERROR: OnceLock<Option<String>> = OnceLock::new();
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    pub parser: ParserConfig,
     pub ui: UiConfig,
     pub logging: LoggingConfig,
     pub input: InputConfig,
@@ -34,14 +33,6 @@ pub struct InputConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct LoggingConfig {
     pub max_logs: usize,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ParserConfig {
-    pub separators: Vec<String>,
-    pub feat_keywords: Vec<String>,
-    pub exceptions: Vec<String>,
-    pub year_length: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -110,12 +101,6 @@ impl Config {
 
     fn default_vals() -> Self {
         Config {
-            parser: ParserConfig {
-                separators: vec![",".into(), ";".into(), "/".into(), "&".into()],
-                feat_keywords: vec!["feat.".into(), "ft.".into(), "feat".into()],
-                exceptions: vec!["AC/DC".into()],
-                year_length: 4,
-            },
             ui: UiConfig {
                 cava_show: false, // <-- Дефолтное значение флага
                 cava_height: 3,

@@ -250,24 +250,13 @@ impl AudioEngine {
                     let sample_rate = props.sample_rate().unwrap_or(48000);
                     let channels = props.channels().map(|c| c as u16).unwrap_or(2);
 
-                    if let Some(t) = tagged_file
-                        .primary_tag()
-                        .or_else(|| tagged_file.first_tag())
-                    {
-                        let rt = tokio::runtime::Handle::current();
-                        let (artist, title) =
-                            rt.block_on(crate::parser::artist::process_and_log_metadata(
-                                t.artist().map(|s| s.to_string()),
-                                t.title().map(|s| s.to_string()),
-                                t.album().map(|s| s.to_string()),
-                                t.get_string(ItemKey::Year).map(|s| s.to_string()),
-                                t.genre().map(|s| s.to_string()),
-                                t.get_string(ItemKey::Comment).map(|s| s.to_string()),
-                            ));
-                        info = (artist, title, sample_rate, channels);
-                    } else {
-                        info = ("Unknown".into(), "Unknown".into(), sample_rate, channels);
-                    }
+                    // УДАЛЕНО: Блок с process_and_log_metadata полностью вырезан.
+                    info = (
+                        "Unknown".to_string(),
+                        "Unknown".to_string(),
+                        sample_rate,
+                        channels,
+                    );
                 }
             }
             info
