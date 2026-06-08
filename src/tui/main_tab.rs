@@ -1,25 +1,27 @@
+use crate::AudioEngine;
 use crate::config::config::Config;
+use crate::tui::widgets::{cava, library, logo, search};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::{Block, Borders},
     style::Style,
+    widgets::{Block, Borders},
 };
-use crate::tui::widgets::{search, library, logo, cava};
-use crate::AudioEngine;
 
-// Теперь передаем сюда состояние, которое Tokio обновляет в фоне
-// (AppState создадим позже, пока просто заложим логику)
 pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
     let conf = Config::global();
+
+    // Если CAVA скрыт настройкой, локально отдаем 0 для расчета высот в Layout
+    let current_cava_height = if conf.ui.cava_show {
+        conf.ui.cava_height
+    } else {
+        0
+    };
 
     // 1. Делим на верх (Search + Main) и низ (CAVA)
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0), 
-            Constraint::Length(conf.ui.cava_height)
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(current_cava_height)])
         .split(area);
 
     let top_parts = Layout::default()
@@ -31,7 +33,7 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
         .split(root[0]);
 
     // --- РИСУЕМ БЛОКИ ---
-    
+
     // Search
     f.render_widget(
         Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT),
@@ -45,14 +47,20 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
         width: area.width.saturating_sub(conf.ui.step_offset),
         height: top_parts[1].height,
     };
-    
-    f.render_widget(
-        Block::default().borders(Borders::LEFT | Borders::RIGHT),
-        stepped_area,
-    );
 
-    // CAVA
-    f.render_widget(Block::default().borders(Borders::ALL), root[1]);
+    // Если CAVA скрыт, дорисовываем нижнюю линию рамок Main блока
+    let main_borders = if conf.ui.cava_show {
+        Borders::LEFT | Borders::RIGHT
+    } else {
+        Borders::LEFT | Borders::RIGHT | Borders::BOTTOM
+    };
+
+    f.render_widget(Block::default().borders(main_borders), stepped_area);
+
+    // Панель CAVA рендерится только если она активна в конфиге
+    if conf.ui.cava_show {
+        f.render_widget(Block::default().borders(Borders::ALL), root[1]);
+    }
 
     // --- МАГИЯ СТЫКА ---
     let buf = f.buffer_mut();
@@ -72,6 +80,21 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
         }
     }
 
+    // Восстанавливаем углы нижней рамки Main блока, если CAVA скрыт
+    if !conf.ui.cava_show {
+        if let Some(cell) = buf.cell_mut((
+            stepped_area.right().saturating_sub(1),
+            stepped_area.bottom().saturating_sub(1),
+        )) {
+            cell.set_symbol("┘");
+        }
+        if let Some(cell) =
+            buf.cell_mut((stepped_area.left(), stepped_area.bottom().saturating_sub(1)))
+        {
+            cell.set_symbol("└");
+        }
+    }
+
     // --- ЛИНИЯ ИЗ КОНФИГА ---
     if conf.ui.line_width > 0 {
         buf.set_string(
@@ -81,17 +104,19 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
             Style::default(),
         );
     }
-    
-    let data_guard = engine.cava_data.try_lock();
-    let freqs = match data_guard {
-        Ok(ref data) => data,
-        Err(_) => &vec![0.0; 128], // Временный вектор для заглушки
-    };
-    
+
     // --- ВЫЗОВ ВИДЖЕТОВ ---
-    // В Tokio-версии эти функции должны быстро забирать данные из кэша
     search::draw_search_widget(f, top_parts[0]);
-    library::draw_library_widget(f, top_parts[1]); 
+    library::draw_library_widget(f, top_parts[1]);
     logo::draw_rmpt_logo(f, top_parts[1]);
-    cava::draw_cava_widget(f, root[1], freqs);
+
+    // Сам виджет спектрограммы рисуем только при show_cava = true
+    if conf.ui.cava_show {
+        let data_guard = engine.cava_data.try_lock();
+        let freqs = match data_guard {
+            Ok(ref data) => data,
+            Err(_) => &vec![0.0; 128],
+        };
+        cava::draw_cava_widget(f, root[1], freqs);
+    }
 }

@@ -46,7 +46,7 @@ pub struct ParserConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UiConfig {
-    // Координаты (строго в корне ui)
+    pub cava_show: bool, // <-- Управление видимостью CAVA без удаления высоты
     pub search_height: u16,
     pub cava_height: u16,
     pub cava_fall_speed: f32,
@@ -71,7 +71,6 @@ pub struct UiConfig {
     pub library_height: u16,
     pub logo_x: u16,
     pub logo_y: u16,
-    // Подраздел цветов
     pub colors: UiColors,
 }
 
@@ -88,7 +87,6 @@ impl Config {
     pub fn global() -> &'static Config {
         CONFIG.get_or_init(|| {
             let content = fs::read_to_string("config.jsonc").unwrap_or_else(|_| {
-                // Если файла нет, логгер это запишет
                 crate::logger::log("CRITICAL: config.jsonc не найден");
                 String::new()
             });
@@ -96,7 +94,6 @@ impl Config {
             match json5::from_str::<Config>(&content) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    // Пишем ошибку парсинга в твой логгер
                     let err_msg = format!("CONFIG ERROR (JSON5): {}", e);
                     crate::logger::log(&err_msg);
 
@@ -120,6 +117,7 @@ impl Config {
                 year_length: 4,
             },
             ui: UiConfig {
+                cava_show: true, // <-- Дефолтное значение флага
                 cava_height: 3,
                 cava_fall_speed: 0.88,
                 cava_exponent: 0.8,
@@ -145,7 +143,7 @@ impl Config {
                 logo_x: 0,
                 logo_y: 29,
                 colors: UiColors {
-                    logo: [167, 192, 128], // Твой текущий зеленый
+                    logo: [167, 192, 128],
                     search_label: [200, 200, 200],
                     regex_label: [200, 200, 200],
                     library_label: [200, 200, 200],
