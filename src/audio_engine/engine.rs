@@ -11,8 +11,6 @@ use std::sync::mpsc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc as tokio_mpsc, watch};
 
-use lofty::prelude::*;
-use lofty::probe::Probe;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::stream::DeviceSinkBuilder;
 use rodio::{Player, Source};
@@ -240,28 +238,7 @@ impl AudioEngine {
         }
     }
 
-    async fn get_audio_info(&self, path: &str) -> (String, String, u32, u16) {
-        let path_owned = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            let mut info = ("Unknown".to_string(), "Unknown".to_string(), 48000, 2);
-            if let Ok(probe) = Probe::open(&path_owned) {
-                if let Ok(tagged_file) = probe.read() {
-                    let props = tagged_file.properties();
-                    let sample_rate = props.sample_rate().unwrap_or(48000);
-                    let channels = props.channels().map(|c| c as u16).unwrap_or(2);
-
-                    // УДАЛЕНО: Блок с process_and_log_metadata полностью вырезан.
-                    info = (
-                        "Unknown".to_string(),
-                        "Unknown".to_string(),
-                        sample_rate,
-                        channels,
-                    );
-                }
-            }
-            info
-        })
-        .await
-        .unwrap_or(("Unknown".to_string(), "Unknown".to_string(), 48000, 2))
+    async fn get_audio_info(&self, _path: &str) -> (String, String, u32, u16) {
+        ("Unknown".to_string(), "Unknown".to_string(), 48000, 2)
     }
 }
