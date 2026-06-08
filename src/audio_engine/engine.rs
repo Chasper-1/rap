@@ -55,7 +55,9 @@ impl AudioEngine {
         let cava_inner = cava_data.clone();
 
         // Запускаем анализатор в отдельном потоке ОС
-        spawn_analyzer(viz_rx, cava_inner);
+        if crate::config::config::Config::global().ui.cava_show {
+            spawn_analyzer(viz_rx, cava_inner);
+        }
 
         let task_handle = tokio::spawn(async move {
             let host = rodio::cpal::default_host();
@@ -86,10 +88,19 @@ impl AudioEngine {
                                 logger::log(&format!("ENGINE: Loading track {}", path));
                                 if let Some(src) = Self::prepare_source(&path, channels).await {
                                     player.stop();
-                                    player.append(VisualizableSource {
-                                        input: src,
-                                        sender: viz_tx.clone(),
-                                    });
+
+                                    // Проверяем настройку из конфига
+                                    if crate::config::config::Config::global().ui.cava_show {
+                                        // Если CAVA включен, оборачиваем в визуализатор
+                                        player.append(VisualizableSource {
+                                            input: src,
+                                            sender: viz_tx.clone(),
+                                        });
+                                    } else {
+                                        // Если CAVA выключен, бросаем чистый источник напрямую
+                                        player.append(src);
+                                    }
+
                                     player.play();
                                     logger::log("ENGINE: Playback started");
                                 }

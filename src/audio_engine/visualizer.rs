@@ -44,12 +44,15 @@ where
     type Item = S::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.input.next()?;
-        let val: f32 = sample.into();
-        if val.abs() > 0.005 {
-            let _ = self.sender.send(val);
+        let sample = self.input.next();
+        if let Some(ref s) = sample {
+            // Вот эта проверка:
+            if crate::config::config::Config::global().ui.cava_show {
+                let clone: f32 = s.clone().into();
+                let _ = self.sender.send(clone);
+            }
         }
-        Some(sample)
+        sample
     }
 }
 
