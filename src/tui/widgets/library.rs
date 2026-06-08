@@ -50,12 +50,12 @@ pub fn draw_library_widget(f: &mut Frame, _area: Rect) {
     }
 
     // Кнопки [1], [2]...
-    let buttons = ["[1]", "[2]", "[3]", "[4]"];
+    let buttons = ["1", "2", "3", "4"];
     for (i, btn) in buttons.iter().enumerate() {
         for (ch_idx, ch) in btn.chars().enumerate() {
             if let Some(cell) = f
                 .buffer_mut()
-                .cell_mut((x + w - 2 + ch_idx as u16, y + 2 + (i as u16 * 2)))
+                .cell_mut((x + w - 1 + ch_idx as u16, y + 2 + (i as u16 * 2)))
             {
                 cell.set_symbol(&ch.to_string()).set_style(btn_style);
             }

@@ -1,6 +1,6 @@
 use crate::AudioEngine;
 use crate::config::config::Config;
-use crate::tui::widgets::{cava, library, logo, search};
+use crate::tui::widgets::{cava, library, logo, search, center};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -109,6 +109,7 @@ pub fn draw_main_layout(f: &mut Frame, area: Rect, engine: &AudioEngine) {
     search::draw_search_widget(f, top_parts[0]);
     library::draw_library_widget(f, top_parts[1]);
     logo::draw_rmpt_logo(f, top_parts[1]);
+    center::draw_center_area(f, top_parts[0]);
 
     // Сам виджет спектрограммы рисуем только при show_cava = true
     if conf.ui.cava_show {

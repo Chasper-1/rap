@@ -37,8 +37,8 @@ pub struct LoggingConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UiConfig {
-    pub cava_show: bool, // <-- Управление видимостью CAVA без удаления высоты
     pub search_height: u16,
+    pub cava_show: bool,
     pub cava_height: u16,
     pub cava_fall_speed: f32,
     pub cava_exponent: f32,
@@ -62,6 +62,7 @@ pub struct UiConfig {
     pub library_height: u16,
     pub logo_x: u16,
     pub logo_y: u16,
+    pub center_width: u16,
     pub colors: UiColors,
 }
 
@@ -114,19 +115,24 @@ impl Config {
                 eq_high: 1.0,
                 search_height: 4,
                 step_offset: 3,
+                
                 line_x: 1,
-                line_y: 28,
+                line_y: 30,
                 line_width: 2,
+                
                 search_box_x: 1,
                 search_box_y: 0,
                 search_box_width: 45,
                 search_box_height: 5,
+                
                 library_x: 4,
                 library_y: 4,
                 library_width: 42,
-                library_height: 36,
+                library_height: 38,
+                
                 logo_x: 0,
-                logo_y: 29,
+                logo_y: 31,
+                center_width: 60,
                 colors: UiColors {
                     logo: [167, 192, 128],
                     search_label: [200, 200, 200],
