@@ -117,7 +117,7 @@ impl Config {
                 year_length: 4,
             },
             ui: UiConfig {
-                cava_show: true, // <-- Дефолтное значение флага
+                cava_show: false, // <-- Дефолтное значение флага
                 cava_height: 3,
                 cava_fall_speed: 0.88,
                 cava_exponent: 0.8,
