@@ -1,10 +1,7 @@
-use super::opus_source::OpusSource;
-use super::symphonia_source::SymphoniaSource;
+use super::source_factory;
 use crate::audio_engine::visualizer::{VisualizableSource, spawn_analyzer};
 use crate::logger;
 
-use std::fs::File;
-use std::io::BufReader;
 use std::num::NonZero;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -84,7 +81,7 @@ impl AudioEngine {
                         match cmd {
                             AudioCmd::Play { path, channels } => {
                                 logger::log(&format!("ENGINE: Loading track {}", path));
-                                if let Some(src) = Self::prepare_source(&path, channels).await {
+                                if let Some(src) = source_factory::open_source(&path, channels).await {
                                     player.stop();
 
                                     // Проверяем настройку из конфига
@@ -151,20 +148,6 @@ impl AudioEngine {
             cava_data,
             task_handle: Some(task_handle),
         }
-    }
-
-    async fn prepare_source(path: &str, channels: u16) -> Option<Box<dyn Source + Send>> {
-        let p = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            let file = File::open(&p).ok()?;
-            if p.to_lowercase().ends_with(".opus") {
-                return OpusSource::new(BufReader::new(file), channels)
-                    .map(|s| Box::new(s) as Box<dyn Source + Send>);
-            }
-            SymphoniaSource::new(file).map(|s| Box::new(s) as Box<dyn Source + Send>)
-        })
-        .await
-        .ok()?
     }
 
     // --- ПУБЛИЧНЫЕ МЕТОДЫ ---
