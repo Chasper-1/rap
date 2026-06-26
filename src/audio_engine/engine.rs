@@ -1,4 +1,6 @@
 use super::source_factory;
+use super::commands::AudioCmd;
+use super::status::EngineStatus;
 use crate::audio_engine::visualizer::{VisualizableSource, spawn_analyzer};
 use crate::logger;
 
@@ -12,22 +14,6 @@ use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::stream::DeviceSinkBuilder;
 use rodio::{Player, Source};
 
-pub enum AudioCmd {
-    Play { path: String, channels: u16 },
-    Stop,
-    Pause,
-    Resume,
-    Seek(Duration),
-    Volume(f32),
-}
-
-#[derive(Clone, Default)]
-pub struct EngineStatus {
-    pub position: Duration,
-    pub is_paused: bool,
-    pub volume: f32,
-    pub is_empty: bool,
-}
 
 pub struct AudioEngine {
     cmd_tx: tokio_mpsc::Sender<AudioCmd>,
@@ -152,16 +138,11 @@ impl AudioEngine {
 
     // --- ПУБЛИЧНЫЕ МЕТОДЫ ---
 
-    pub async fn play(&self, path: &str) -> (String, String) {
-        let (artist, title, _, channels) = self.get_audio_info(path).await;
-        let _ = self
-            .cmd_tx
-            .send(AudioCmd::Play {
-                path: path.to_string(),
-                channels,
-            })
-            .await;
-        (artist, title)
+    pub async fn play(&self, path: &str) {
+        let _ = self.cmd_tx.send(AudioCmd::Play {
+            path: path.to_string(),
+            channels: 2,
+        }).await;
     }
 
     pub async fn stop(&self) {
@@ -219,9 +200,5 @@ impl AudioEngine {
         if let Some(handle) = self.task_handle.take() {
             let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
         }
-    }
-
-    async fn get_audio_info(&self, _path: &str) -> (String, String, u32, u16) {
-        ("Unknown".to_string(), "Unknown".to_string(), 48000, 2)
     }
 }

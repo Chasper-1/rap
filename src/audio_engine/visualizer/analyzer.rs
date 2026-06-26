@@ -1,4 +1,9 @@
+use std::sync::{mpsc, Arc};
 
+use realfft::RealFftPlanner;
+use tokio::sync::Mutex;
+
+use std::sync::mpsc::{Receiver, Sender};
 
 /// Запускает анализатор в отдельном блокирующем потоке.
 /// Принимает синхронный Receiver и обновляет `output` (общий вектор для UI).

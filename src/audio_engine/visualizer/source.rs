@@ -1,4 +1,8 @@
+use std::num::NonZero;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
 
+use rodio::Source;
 
 pub struct VisualizableSource<S>
 where
@@ -7,6 +11,7 @@ where
 {
     pub input: S,
     pub sender: Sender<f32>,
+    
 }
 
 impl<S> Source for VisualizableSource<S>
