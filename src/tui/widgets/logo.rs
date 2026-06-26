@@ -18,10 +18,7 @@ pub fn draw_rmpt_logo(f: &mut Frame, _area: Rect) {
 █ █
 
 █▀█
-█▀ 
-
-▀█▀
- █ ";
+█▀ ";
 
     let paragraph = Paragraph::new(Text::from(logo))
         .style(Style::default().fg(Color::Rgb(r, g, b)).bold());
