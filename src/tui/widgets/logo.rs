@@ -14,8 +14,8 @@ pub fn draw_rmpt_logo(f: &mut Frame, _area: Rect) {
     let logo = "█▀█
 █▀▄
 
-█▄█
-█ █
+█▀█
+█▀█
 
 █▀█
 █▀ ";
