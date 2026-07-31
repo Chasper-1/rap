@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let mut engine = AudioEngine::new(None);
+    let mut engine = AudioEngine::new();
 
     engine.play(&path).await;
 

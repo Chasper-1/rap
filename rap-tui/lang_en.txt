@@ -1,0 +1,9 @@
+# rap-tui interface translation.
+# Copy this file, rename to lang_<code>.txt and change the text — loaded via --lang <code>.
+# Format: key=value. Lines starting with # are comments. Empty lines are skipped.
+error_bad_path=Folder not found: {path}
+error_is_file=The given path is a file, a folder is required
+header=Folder: {path}
+empty_dir=Empty
+now_playing=Now playing: 
+paused= (paused)

@@ -3,10 +3,8 @@ use super::source_factory;
 use super::status::EngineStatus;
 
 use std::num::NonZero;
-use std::sync::Arc;
-use std::sync::mpsc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc as tokio_mpsc, watch};
+use tokio::sync::{mpsc as tokio_mpsc, watch};
 
 use rodio::Player;
 use rodio::cpal::traits::HostTrait;
@@ -16,26 +14,14 @@ pub struct AudioEngine {
     cmd_tx: tokio_mpsc::Sender<AudioCmd>,
     status_rx: watch::Receiver<EngineStatus>,
     shutdown_tx: watch::Sender<bool>,
-    pub cava_data: Arc<Mutex<Vec<f32>>>,
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AudioEngine {
-    pub fn new(visualizer: Option<VisualizerSettings>) -> Self {
+    pub fn new() -> Self {
         let (cmd_tx, mut cmd_rx) = tokio_mpsc::channel::<AudioCmd>(64);
         let (status_tx, status_rx) = watch::channel(EngineStatus::default());
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-
-        let cava_data = Arc::new(Mutex::new(vec![0.0; 128]));
-
-        // Синхронный канал для визуализации (только если она включена)
-        let viz_tx = if let Some(settings) = visualizer {
-            let (tx, rx) = mpsc::channel::<f32>();
-            spawn_analyzer(rx, cava_data.clone(), settings);
-            Some(tx)
-        } else {
-            None
-        };
 
         let task_handle = tokio::spawn(async move {
             let host = rodio::cpal::default_host();
@@ -61,16 +47,7 @@ impl AudioEngine {
                             AudioCmd::Play { path, channels } => {
                                 if let Some(src) = source_factory::open_source(&path, channels).await {
                                     player.stop();
-
-                                    if let Some(tx) = &viz_tx {
-                                        player.append(VisualizableSource {
-                                            input: src,
-                                            sender: tx.clone(),
-                                        });
-                                    } else {
-                                        player.append(src);
-                                    }
-
+                                    player.append(src);
                                     player.play();
                                 }
                             }
@@ -115,7 +92,6 @@ impl AudioEngine {
             cmd_tx,
             status_rx,
             shutdown_tx,
-            cava_data,
             task_handle: Some(task_handle),
         }
     }

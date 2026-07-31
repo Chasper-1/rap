@@ -3,10 +3,17 @@ name = "rap"
 version = "0.3.7"
 edition = "2024"
 
+[workspace]
+members = ["rap-engine", "rap-tui"]
+
+
+[workspace.dependencies]
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+
 [dependencies]
 rap-engine = { path = "rap-engine" }
-tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "time"] }
-
+tokio = { workspace = true }
 
 [profile.release]
 opt-level = 3
