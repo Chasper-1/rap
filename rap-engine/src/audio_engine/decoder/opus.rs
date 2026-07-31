@@ -1,12 +1,9 @@
 use ogg::PacketReader;
-use opus_codec::{Channels, Decoder as OpusDecoder, SampleRate as OpusSampleRate};
+use opus_decoder::OpusDecoder;
 use rodio::Source;
 use std::io::{Read, Seek};
 use std::num::NonZero;
 use std::time::Duration;
-
-/// Максимальный размер кадра Opus: 120 мс при 48 кГц.
-const MAX_FRAME_SAMPLES: usize = 5760;
 
 pub struct OpusSource<R: Read + Seek> {
     packet_reader: PacketReader<R>,
@@ -24,20 +21,15 @@ pub struct OpusSource<R: Read + Seek> {
 
 impl<R: Read + Seek> OpusSource<R> {
     pub fn new(reader: R, channels: u16) -> Option<Self> {
-        let rate = OpusSampleRate::Hz48000;
-        let chans = if channels == 1 {
-            Channels::Mono
-        } else {
-            Channels::Stereo
-        };
-        let decoder = OpusDecoder::new(rate, chans).ok()?;
+        let ch = usize::from(channels).clamp(1, 2);
+        let decoder = OpusDecoder::new(48000, ch).ok()?;
         let mut packet_reader = PacketReader::new(reader);
 
         // Pre-skip из первого пакета OpusHead (байты 10..12, little-endian):
         // столько сэмплов кодек «прогревает» тишиной — их нужно пропустить.
         let skip_remaining = match packet_reader.read_packet() {
             Ok(Some(p)) if p.data.starts_with(b"OpusHead") && p.data.len() >= 12 => {
-                u16::from_le_bytes([p.data[10], p.data[11]]) as usize * channels as usize
+                u16::from_le_bytes([p.data[10], p.data[11]]) as usize * ch
             }
             _ => 0,
         };
@@ -45,12 +37,12 @@ impl<R: Read + Seek> OpusSource<R> {
         Some(Self {
             packet_reader,
             decoder,
-            sample_buffer: vec![0.0; MAX_FRAME_SAMPLES * channels as usize],
+            sample_buffer: vec![0.0; OpusDecoder::MAX_FRAME_SIZE_48K * ch],
             decoded_len: 0,
             buffer_pos: 0,
             skip_remaining,
             sample_rate: 48000,
-            channels,
+            channels: ch as u16,
         })
     }
 
@@ -94,16 +86,27 @@ impl<R: Read + Seek> Iterator for OpusSource<R> {
             if self.buffer_pos >= self.decoded_len && !self.fill() {
                 return None;
             }
-            let sample = self.sample_buffer.get(self.buffer_pos).copied();
+            let sample = self.sample_buffer[self.buffer_pos];
             self.buffer_pos += 1;
-            return sample;
+            // Преддекодируем следующий пакет сразу после выдачи последнего сэмпла:
+            // rodio пересоздаёт конвертер частоты на границе «спана» и вызывает
+            // current_span_len() именно в этот момент. Буфер должен быть заполнен,
+            // чтобы остаток не оказался нулевым (Some(0) rodio считает концом потока).
+            if self.buffer_pos >= self.decoded_len {
+                let _ = self.fill();
+            }
+            return Some(sample);
         }
     }
 }
 
 impl<R: Read + Seek + Send> Source for OpusSource<R> {
     fn current_span_len(&self) -> Option<usize> {
-        None
+        // Остаток текущего декодированного пакета: кратен числу каналов
+        // (пакеты декодируются целыми кадрами) и больше нуля, пока поток жив,
+        // благодаря преддекодированию в next()/try_seek(). По этому числу rodio
+        // пересоздаёт конвертер частоты на границе кадра.
+        Some(self.decoded_len.saturating_sub(self.buffer_pos))
     }
     fn channels(&self) -> NonZero<u16> {
         NonZero::new(self.channels).unwrap_or(NonZero::new(2).unwrap())
@@ -119,10 +122,13 @@ impl<R: Read + Seek + Send> Source for OpusSource<R> {
         if self.packet_reader.seek_absgp(None, granule).is_ok() {
             // Сбрасываем состояние кодера, иначе остатки старой позиции
             // прорываются посторонними звуками после перемотки.
-            let _ = self.decoder.reset();
+            self.decoder.reset();
             self.decoded_len = 0;
             self.buffer_pos = 0;
             self.skip_remaining = 0;
+            // Сразу заполняем буфер следующим пакетом, чтобы current_span_len()
+            // не вернул 0 (rodio принял бы это за конец потока).
+            let _ = self.fill();
             Ok(())
         } else {
             Err(rodio::source::SeekError::NotSupported {
@@ -138,7 +144,24 @@ mod tests {
 
     #[test]
     fn max_frame_constant() {
-        // 120 мс при 48 кГц = 5760 сэмплов на канал
-        assert_eq!(MAX_FRAME_SAMPLES, 5760);
+        // 120 мс при 48 кГц = 5760 сэмплов на канал; буфер обязан это вмещать.
+        assert!(OpusDecoder::MAX_FRAME_SIZE_48K >= 5760);
+    }
+
+    #[test]
+    fn decoder_new_valid_params() {
+        assert!(OpusDecoder::new(48_000, 1).is_ok());
+        assert!(OpusDecoder::new(48_000, 2).is_ok());
+        assert!(OpusDecoder::new(8_000, 1).is_ok());
+    }
+
+    #[test]
+    fn decoder_new_invalid_params() {
+        // Частота вне списка {8000, 12000, 16000, 24000, 48000} — ошибка.
+        assert!(OpusDecoder::new(44_100, 2).is_err());
+        // Каналов больше двух — ошибка.
+        assert!(OpusDecoder::new(48_000, 3).is_err());
+        // Нулевая частота — ошибка.
+        assert!(OpusDecoder::new(0, 1).is_err());
     }
 }

@@ -94,45 +94,62 @@ impl SymphoniaSource {
             _ => {}
         }
     }
+
+    /// Декодирует следующий пакет выбранного трека в буфер.
+    /// Возвращает `false`, когда пакетов больше нет (конец потока или ошибка).
+    fn refill(&mut self) -> bool {
+        loop {
+            let packet = match self.reader.next_packet() {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+
+            match self.decoder.decode(&packet) {
+                Ok(decoded) => {
+                    Self::fill_buffer(decoded, self.channels, &mut self.sample_buffer);
+                    self.buffer_pos = 0;
+                    if !self.sample_buffer.is_empty() {
+                        return true;
+                    }
+                }
+                Err(_) => {
+                    continue;
+                }
+            }
+        }
+    }
 }
 
 impl Iterator for SymphoniaSource {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.buffer_pos >= self.sample_buffer.len() {
-            loop {
-                let packet = match self.reader.next_packet() {
-                    Ok(p) => p,
-                    Err(_) => return None,
-                };
-
-                if packet.track_id() != self.track_id {
-                    continue;
-                }
-
-                match self.decoder.decode(&packet) {
-                    Ok(decoded) => {
-                        Self::fill_buffer(decoded, self.channels, &mut self.sample_buffer);
-                        self.buffer_pos = 0;
-                        if !self.sample_buffer.is_empty() {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        continue;
-                    }
-                }
-            }
+        if self.buffer_pos >= self.sample_buffer.len() && !self.refill() {
+            return None;
         }
-        let sample = self.sample_buffer.get(self.buffer_pos).cloned();
+        let sample = self.sample_buffer[self.buffer_pos];
         self.buffer_pos += 1;
-        sample
+        // Преддекодируем следующий пакет сразу после выдачи последнего сэмпла:
+        // rodio пересоздаёт конвертер частоты на границе «спана» и вызывает
+        // current_span_len() именно в этот момент. Буфер должен быть заполнен,
+        // чтобы остаток не оказался нулевым (Some(0) rodio считает концом потока).
+        if self.buffer_pos >= self.sample_buffer.len() {
+            let _ = self.refill();
+        }
+        Some(sample)
     }
 }
 
 impl Source for SymphoniaSource {
     fn current_span_len(&self) -> Option<usize> {
-        None
+        // Остаток текущего декодированного пакета: кратен числу каналов
+        // (пакеты декодируются целыми кадрами) и больше нуля, пока поток жив,
+        // благодаря преддекодированию в next()/try_seek(). По этому числу rodio
+        // пересоздаёт конвертер частоты на границе кадра.
+        Some(self.sample_buffer.len().saturating_sub(self.buffer_pos))
     }
     fn channels(&self) -> NonZero<u16> {
         NonZero::new(self.channels).unwrap_or(NonZero::new(2).unwrap())
@@ -156,11 +173,72 @@ impl Source for SymphoniaSource {
             self.decoder.reset();
             self.sample_buffer.clear();
             self.buffer_pos = 0;
+            // Сразу заполняем буфер следующим пакетом, чтобы current_span_len()
+            // не вернул 0 (rodio принял бы это за конец потока).
+            let _ = self.refill();
             Ok(())
         } else {
             Err(rodio::source::SeekError::NotSupported {
                 underlying_source: "SymphoniaSource",
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+    use symphonia::core::audio::{AudioBuffer, Channels, SignalSpec};
+
+    const STEREO: Channels = Channels::FRONT_LEFT.union(Channels::FRONT_RIGHT);
+
+    fn render(buf: &mut AudioBuffer<f32>, frames: usize) {
+        buf.render_reserved(Some(frames));
+        let mut v = 1.0f32;
+        for ch in 0..2 {
+            for s in buf.chan_mut(ch) {
+                *s = v;
+                v += 1.0;
+            }
+        }
+    }
+
+    #[test]
+    fn fill_buffer_interleaves_stereo() {
+        let mut buf = AudioBuffer::<f32>::new(3, SignalSpec::new(48000, STEREO));
+        render(&mut buf, 3);
+
+        let mut out = Vec::new();
+        SymphoniaSource::fill_buffer(AudioBufferRef::F32(Cow::Borrowed(&buf)), 2, &mut out);
+
+        // Поканальные сэмплы должны переплестись в порядок L,R,L,R,L,R:
+        // канал 0 = 1,2,3; канал 1 = 4,5,6.
+        assert_eq!(out, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn fill_buffer_mono_uses_first_channel_only() {
+        let mut buf = AudioBuffer::<f32>::new(3, SignalSpec::new(48000, STEREO));
+        render(&mut buf, 3);
+
+        let mut out = Vec::new();
+        SymphoniaSource::fill_buffer(AudioBufferRef::F32(Cow::Borrowed(&buf)), 1, &mut out);
+
+        assert_eq!(out, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn fill_buffer_scales_s16() {
+        let mut buf = AudioBuffer::<i16>::new(2, SignalSpec::new(48000, Channels::FRONT_CENTRE));
+        buf.render_reserved(Some(2));
+        buf.chan_mut(0).copy_from_slice(&[32767, -32768]);
+
+        let mut out = Vec::new();
+        SymphoniaSource::fill_buffer(AudioBufferRef::S16(Cow::Borrowed(&buf)), 1, &mut out);
+
+        assert_eq!(out.len(), 2);
+        assert!((out[0] - 32767.0 / 32768.0).abs() < f32::EPSILON);
+        assert_eq!(out[1], -1.0);
     }
 }

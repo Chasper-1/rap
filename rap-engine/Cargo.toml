@@ -4,9 +4,9 @@ version = "0.3.13"
 edition = "2024"
 
 [dependencies]
+tokio.workspace = true
+
 rodio = { version = "0.22.2", features = ["symphonia-all", "symphonia-isomp4"] }
 symphonia = { version = "0.5", features = ["all-formats", "all-codecs", "isomp4"] }
-opus-codec = "0.1.2"
 ogg = "0.9"
-
-tokio.workspace = true
+opus-decoder = "0.1.1"
