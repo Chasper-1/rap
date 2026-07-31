@@ -137,7 +137,7 @@ impl Iterator for SymphoniaSource {
         // current_span_len() именно в этот момент. Буфер должен быть заполнен,
         // чтобы остаток не оказался нулевым (Some(0) rodio считает концом потока).
         if self.buffer_pos >= self.sample_buffer.len() {
-            let _ = self.refill();
+            self.refill();
         }
         Some(sample)
     }
@@ -175,7 +175,7 @@ impl Source for SymphoniaSource {
             self.buffer_pos = 0;
             // Сразу заполняем буфер следующим пакетом, чтобы current_span_len()
             // не вернул 0 (rodio принял бы это за конец потока).
-            let _ = self.refill();
+            self.refill();
             Ok(())
         } else {
             Err(rodio::source::SeekError::NotSupported {

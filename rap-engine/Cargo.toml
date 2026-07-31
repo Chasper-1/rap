@@ -9,4 +9,4 @@ tokio.workspace = true
 rodio = { version = "0.22.2", features = ["symphonia-all", "symphonia-isomp4"] }
 symphonia = { version = "0.5", features = ["all-formats", "all-codecs", "isomp4"] }
 ogg = "0.9"
-opus-decoder = "0.1.1"
+opus-codec = "0.1.2"
