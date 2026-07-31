@@ -8,21 +8,34 @@ use crossterm::terminal::{Clear, ClearType};
 use crate::i18n::Strings;
 use crate::scanner::Entry;
 
+/// Частичные блоки заполнения (1/8 .. 7/8 ширины символа): точный край
+/// полоски. Пустая часть — пробелы, поэтому тёмный «хвост» частичного
+/// блока сливается с фоном терминала и дыры не видно.
+const PARTIAL_BLOCKS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+
 /// Полоска прогресса: границы '[ ]' схематично обозначают её место,
-/// заполнение — '█', пустая часть — пробелы. Без цветов — видна в любой
-/// теме терминала. width — общая ширина, включая скобки. progress — 0..1.
+/// заполнение — '█', край — частичный блок 1/8 (▏..▉), пустая часть —
+/// пробелы. Без цветов — видна в любой теме терминала. width — общая
+/// ширина, включая скобки. progress — 0..1.
 pub fn progress_bar(progress: f32, width: usize) -> String {
     if width < 2 {
         return String::new();
     }
     let inner = width - 2;
-    let filled = (progress.clamp(0.0, 1.0) * inner as f32).round() as usize;
+    // Ширина заполнения в восьмушках символа
+    let eighths = (progress.clamp(0.0, 1.0) * inner as f32 * 8.0).round() as usize;
+    let full = eighths / 8;
+    let rem = eighths % 8;
     let mut s = String::with_capacity(width);
     s.push('[');
-    for _ in 0..filled {
+    for _ in 0..full {
         s.push('█');
     }
-    for _ in filled..inner {
+    if rem > 0 {
+        s.push(PARTIAL_BLOCKS[rem - 1]);
+    }
+    let empty = inner.saturating_sub(full + usize::from(rem > 0));
+    for _ in 0..empty {
         s.push(' ');
     }
     s.push(']');
@@ -147,10 +160,14 @@ mod tests {
 
     #[test]
     fn progress_rounding() {
-        // 0.1 * 8 = 0.8 → 1 символ
-        assert_eq!(progress_bar(0.1, 10), "[█       ]");
-        // 0.95 * 8 = 7.6 → 8 символов
-        assert_eq!(progress_bar(0.95, 10), "[████████]");
+        // 0.1 * 8 = 0.8 символа = 6.4/8 → округление 6 → '▊'
+        assert_eq!(progress_bar(0.1, 10), "[▊       ]");
+        // 0.15 * 8 = 1.2 символа = 9.6/8 → 10 восьмушек = 1 полный + 2/8 → '▎'
+        assert_eq!(progress_bar(0.15, 10), "[█▎      ]");
+        // 0.125 * 8 = 1 символ ровно
+        assert_eq!(progress_bar(0.125, 10), "[█       ]");
+        // 0.95 * 8 = 7.6 символа = 60.8/8 → 61 восьмушка = 7 полных + 5/8 → '▋'
+        assert_eq!(progress_bar(0.95, 10), "[███████▋]");
     }
 
     #[test]
