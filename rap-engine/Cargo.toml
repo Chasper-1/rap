@@ -1,0 +1,12 @@
+[package]
+name = "rap-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rodio = { version = "0.22.2", features = ["symphonia-all", "symphonia-isomp4"] }
+symphonia = { version = "0.5", features = ["all-formats", "all-codecs", "isomp4"] }
+opus-codec = "0.1.2"
+ogg = "0.9"
+realfft = "3.5.0"
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
