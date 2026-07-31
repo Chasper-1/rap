@@ -57,14 +57,19 @@ impl App {
         engine.set_volume(volume).await;
 
         // Продолжение с места, где остановились в прошлый раз.
+        // Трек подгружается сразу, но НА ПАУЗЕ: звук не должен
+        // выскочить сам по себе при запуске плеера.
         let resume = store.get_resume().await;
         let mut track = None;
+        let mut paused = false;
         let mut selected = 0;
         if let Some((path, pos)) = resume {
             let path_buf = PathBuf::from(&path);
             if path_buf.exists() {
                 engine.play(&path).await;
                 engine.seek_to(pos).await;
+                engine.pause().await;
+                paused = true;
                 let path2 = path_buf.clone();
                 let duration =
                     rap_engine::tokio::task::spawn_blocking(move || probe_duration(&path2))
@@ -98,7 +103,7 @@ impl App {
             audio_files,
             selected,
             track,
-            paused: false,
+            paused,
             volume,
             running: true,
             last_click: None,
