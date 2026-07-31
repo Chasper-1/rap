@@ -79,6 +79,19 @@ impl AudioEngine {
                                     fade_to(&player, target_gain).await;
                                 }
                             }
+                            AudioCmd::PlayPaused { path, channels, seek_secs } => {
+                                if let Some(src) = source_factory::open_source(&path, channels).await {
+                                    fade_to(&player, 0.0).await;
+                                    // Пауза ставится ДО добавления источника: трек
+                                    // добавляется уже в паузе и не успевает зазвучать.
+                                    player.pause();
+                                    player.stop();
+                                    player.append(src);
+                                    if seek_secs > 0 {
+                                        let _ = player.try_seek(Duration::from_secs(seek_secs));
+                                    }
+                                }
+                            }
                             AudioCmd::Stop => {
                                 fade_to(&player, 0.0).await;
                                 player.stop();
@@ -158,6 +171,18 @@ impl AudioEngine {
 
     pub async fn stop(&self) {
         let _ = self.cmd_tx.send(AudioCmd::Stop).await;
+    }
+
+    /// Запуск трека сразу на паузе (для продолжения с сохранённой позиции).
+    pub async fn play_paused(&self, path: &str, seek_secs: u64) {
+        let _ = self
+            .cmd_tx
+            .send(AudioCmd::PlayPaused {
+                path: path.to_string(),
+                channels: 2,
+                seek_secs,
+            })
+            .await;
     }
 
     pub async fn pause(&self) {

@@ -57,8 +57,8 @@ impl App {
         engine.set_volume(volume).await;
 
         // Продолжение с места, где остановились в прошлый раз.
-        // Трек подгружается сразу, но НА ПАУЗЕ: звук не должен
-        // выскочить сам по себе при запуске плеера.
+        // Трек запускается СРАЗУ в паузе одной командой движка:
+        // звук не успевает зазвучать при старте плеера.
         let resume = store.get_resume().await;
         let mut track = None;
         let mut paused = false;
@@ -66,9 +66,7 @@ impl App {
         if let Some((path, pos)) = resume {
             let path_buf = PathBuf::from(&path);
             if path_buf.exists() {
-                engine.play(&path).await;
-                engine.seek_to(pos).await;
-                engine.pause().await;
+                engine.play_paused(&path, pos).await;
                 paused = true;
                 let path2 = path_buf.clone();
                 let duration =

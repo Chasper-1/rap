@@ -5,6 +5,13 @@ pub enum AudioCmd {
         path: String,
         channels: u16,
     },
+    /// Запуск трека СРАЗУ в паузе (источник добавляется уже в паузе,
+    /// звук не успевает зазвучать) + перемотка к позиции.
+    PlayPaused {
+        path: String,
+        channels: u16,
+        seek_secs: u64,
+    },
     Stop,
     Pause,
     Resume,
