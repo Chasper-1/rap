@@ -150,6 +150,10 @@ impl Source for SymphoniaSource {
             track_id: Some(self.track_id),
         };
         if self.reader.seek(SeekMode::Accurate, seek_to).is_ok() {
+            // Обязательно сбрасываем внутреннее состояние декодера
+            // (перекрытия кадров, предикторы и т.п.), иначе после перемотки
+            // остатки старой позиции дают посторонние звуки.
+            self.decoder.reset();
             self.sample_buffer.clear();
             self.buffer_pos = 0;
             Ok(())
