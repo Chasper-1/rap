@@ -10,6 +10,26 @@ use rodio::Player;
 use rodio::cpal::traits::HostTrait;
 use rodio::stream::DeviceSinkBuilder;
 
+/// Длительность плавного изменения громкости (фейд-вход/выход).
+const FADE: Duration = Duration::from_millis(40);
+/// Число шагов фейда.
+const FADE_STEPS: u32 = 12;
+
+/// Плавно (но быстро) меняет громкость плеера от текущей к `target`.
+/// Вызывается только из потока движка.
+async fn fade_to(player: &Player, target: f32) {
+    let from = player.volume();
+    if (from - target).abs() < 1e-4 {
+        return;
+    }
+    for i in 1..=FADE_STEPS {
+        let t = i as f32 / FADE_STEPS as f32;
+        player.set_volume(from + (target - from) * t);
+        tokio::time::sleep(FADE / FADE_STEPS).await;
+    }
+    player.set_volume(target);
+}
+
 pub struct AudioEngine {
     cmd_tx: tokio_mpsc::Sender<AudioCmd>,
     status_rx: watch::Receiver<EngineStatus>,
@@ -39,6 +59,10 @@ impl AudioEngine {
 
             let player = Player::connect_new(stream.mixer());
 
+            // Громкость, которую выставил пользователь: после фейдов
+            // плеер возвращается именно к ней.
+            let mut target_gain: f32 = 1.0;
+
             loop {
                 tokio::select! {
                     // Команды от UI
@@ -46,21 +70,31 @@ impl AudioEngine {
                         match cmd {
                             AudioCmd::Play { path, channels } => {
                                 if let Some(src) = source_factory::open_source(&path, channels).await {
+                                    // Сначала плавно гасим старый трек, чтобы не было щелчка
+                                    fade_to(&player, 0.0).await;
                                     player.stop();
                                     player.append(src);
                                     player.play();
+                                    // И плавно поднимаем громкость нового трека
+                                    fade_to(&player, target_gain).await;
                                 }
                             }
                             AudioCmd::Stop => {
+                                fade_to(&player, 0.0).await;
                                 player.stop();
                             }
                             AudioCmd::Pause => {
+                                fade_to(&player, 0.0).await;
                                 player.pause();
                             }
                             AudioCmd::Resume => {
                                 player.play();
+                                fade_to(&player, target_gain).await;
                             }
-                            AudioCmd::Volume(v) => player.set_volume(v),
+                            AudioCmd::Volume(v) => {
+                                target_gain = v;
+                                player.set_volume(v);
+                            }
                             AudioCmd::Seek(d) => {
                                 let _ = player.try_seek(d);
                             }
