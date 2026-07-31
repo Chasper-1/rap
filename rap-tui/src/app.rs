@@ -137,7 +137,9 @@ impl App {
 
     async fn handle(&mut self, event: Event) {
         match event {
-            Event::Key(k) if k.kind == KeyEventKind::Press => self.on_key(k.code).await,
+            // Press и Repeat (зажатая клавиша) — оба обрабатываем,
+            // отбрасываем только Release
+            Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k.code).await,
             Event::Mouse(m) => self.on_mouse(m.kind, m.row, m.column).await,
             _ => {}
         }

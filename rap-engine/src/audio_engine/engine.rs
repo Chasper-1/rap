@@ -64,6 +64,14 @@ impl AudioEngine {
                             AudioCmd::Seek(d) => {
                                 let _ = player.try_seek(d);
                             }
+                            AudioCmd::SeekRelative(offset) => {
+                                // Считаем от реальной позиции плеера в его же потоке:
+                                // при зажатой клавише повторные сдвиги не «застревают»
+                                // на устаревшей позиции из статуса.
+                                let current = player.get_pos();
+                                let target = (current + offset as f64).max(0.0);
+                                let _ = player.try_seek(Duration::from_secs_f64(target));
+                            }
                         }
                     }
                     // Сигнал завершения
@@ -149,9 +157,7 @@ impl AudioEngine {
     }
 
     pub async fn seek_relative(&self, offset_secs: i64) {
-        let current = self.status_rx.borrow().position.as_secs_f64();
-        let target = Duration::from_secs_f64((current + offset_secs as f64).max(0.0));
-        let _ = self.cmd_tx.send(AudioCmd::Seek(target)).await;
+        let _ = self.cmd_tx.send(AudioCmd::SeekRelative(offset_secs)).await;
     }
 
     /// Сигнализирует движку о завершении работы и ждёт его остановки.
