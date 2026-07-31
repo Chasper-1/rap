@@ -134,8 +134,9 @@ impl AudioEngine {
                             break;
                         }
                     }
-                    // Периодическое обновление статуса
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    // Периодическое обновление статуса (50 мс — полоска
+                    // прогресса движется плавно, в т.ч. при зажатой перемотке)
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         let _ = status_tx.send(EngineStatus {
                             position: player.get_pos(),
                             is_paused: player.is_paused(),

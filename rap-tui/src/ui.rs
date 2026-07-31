@@ -8,16 +8,31 @@ use crossterm::terminal::{Clear, ClearType};
 use crate::i18n::Strings;
 use crate::scanner::Entry;
 
-/// Полоска прогресса: заполненная часть — '█', пустая — '—'.
+/// Частичные блоки заполнения (1/8 .. 7/8 ширины символа) для
+/// точного позиционирования края полоски.
+const PARTIAL_BLOCKS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+
+/// Полоска прогресса с точностью 1/8 символа: заполненная часть — '█'
+/// (последний символ может быть частичным блоком ▏..▉), пустая — '░'.
 /// Без цветов — видна в любой теме терминала. progress — 0..1.
 pub fn progress_bar(progress: f32, width: usize) -> String {
-    let filled = (progress.clamp(0.0, 1.0) * width as f32).round() as usize;
+    if width == 0 {
+        return String::new();
+    }
+    // Ширина в восьмушках символа
+    let eighths = (progress.clamp(0.0, 1.0) * width as f32 * 8.0).round() as usize;
+    let full = eighths / 8;
+    let rem = eighths % 8;
     let mut s = String::with_capacity(width);
-    for _ in 0..filled {
+    for _ in 0..full {
         s.push('█');
     }
-    for _ in filled..width {
-        s.push('—');
+    if rem > 0 {
+        s.push(PARTIAL_BLOCKS[rem - 1]);
+    }
+    let empty = width.saturating_sub(full + usize::from(rem > 0));
+    for _ in 0..empty {
+        s.push('░');
     }
     s
 }
@@ -112,7 +127,7 @@ mod tests {
 
     #[test]
     fn progress_zero() {
-        assert_eq!(progress_bar(0.0, 10), "——————————");
+        assert_eq!(progress_bar(0.0, 10), "░░░░░░░░░░");
     }
 
     #[test]
@@ -122,7 +137,7 @@ mod tests {
 
     #[test]
     fn progress_half_even() {
-        assert_eq!(progress_bar(0.5, 10), "█████—————");
+        assert_eq!(progress_bar(0.5, 10), "█████░░░░░");
     }
 
     #[test]
@@ -133,7 +148,19 @@ mod tests {
     #[test]
     fn progress_clamped() {
         assert_eq!(progress_bar(1.5, 5), "█████");
-        assert_eq!(progress_bar(-0.5, 5), "—————");
+        assert_eq!(progress_bar(-0.5, 5), "░░░░░");
+    }
+
+    #[test]
+    fn progress_partial_eighth() {
+        // 0.05 * 10 = 0.5 символа = 4/8 → частичный блок '▌'
+        assert_eq!(progress_bar(0.05, 10), "▌░░░░░░░░░");
+        // 0.075 * 10 = 0.75 символа = 6/8 → '▊'
+        assert_eq!(progress_bar(0.075, 10), "▊░░░░░░░░░");
+        // 1.5 символа: 1 полный + 4/8 → '█▌'
+        assert_eq!(progress_bar(0.15, 10), "█▌░░░░░░░░");
+        // 1.25 символа: 1 полный + 2/8 → '█▎'
+        assert_eq!(progress_bar(0.125, 10), "█▎░░░░░░░░");
     }
 
     #[test]
