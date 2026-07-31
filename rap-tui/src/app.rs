@@ -22,6 +22,8 @@ const START_GRACE: Duration = Duration::from_secs(2);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Шаг изменения громкости.
 const VOLUME_STEP: f32 = 0.05;
+/// Шаг перемотки, секунд.
+const SEEK_STEP: i64 = 5;
 
 struct Track {
     path: PathBuf,
@@ -91,7 +93,7 @@ impl App {
     async fn handle(&mut self, event: Event) {
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => self.on_key(k.code).await,
-            Event::Mouse(m) => self.on_mouse(m.kind, m.row).await,
+            Event::Mouse(m) => self.on_mouse(m.kind, m.row, m.column).await,
             _ => {}
         }
     }
@@ -107,7 +109,9 @@ impl App {
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = self.entries.len().saturating_sub(1),
             KeyCode::Enter => self.activate_selected().await,
-            KeyCode::Backspace | KeyCode::Left => self.go_up(),
+            KeyCode::Backspace => self.go_back(),
+            KeyCode::Left => self.seek_relative(-SEEK_STEP).await,
+            KeyCode::Right => self.seek_relative(SEEK_STEP).await,
             KeyCode::Char('q') => self.running = false,
             KeyCode::Char(' ') => self.toggle_pause().await,
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(VOLUME_STEP).await,
@@ -122,7 +126,27 @@ impl App {
         self.store.set_volume(self.volume).await;
     }
 
-    async fn on_mouse(&mut self, kind: MouseEventKind, row: u16) {
+    async fn seek_relative(&mut self, offset_secs: i64) {
+        if self.track.is_none() {
+            return;
+        }
+        self.engine.seek_relative(offset_secs).await;
+    }
+
+    /// Перемотка по клику на полоске прогресса: позиция пропорциональна столбцу.
+    async fn seek_to_click(&mut self, column: u16, width: u16) {
+        let Some(duration) = self.track.as_ref().and_then(|t| t.duration) else {
+            return;
+        };
+        if width == 0 {
+            return;
+        }
+        let ratio = column as f32 / width as f32;
+        let secs = (ratio * duration.as_secs_f32()) as u64;
+        self.engine.seek_to(secs).await;
+    }
+
+    async fn on_mouse(&mut self, kind: MouseEventKind, row: u16, column: u16) {
         match kind {
             MouseEventKind::ScrollUp => self.selected = self.selected.saturating_sub(1),
             MouseEventKind::ScrollDown => {
@@ -131,6 +155,12 @@ impl App {
                 }
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                // Клик по полоске прогресса (последняя строка) — перемотка
+                let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
+                if row == h.saturating_sub(1) {
+                    self.seek_to_click(column, w).await;
+                    return;
+                }
                 if row == 0 {
                     return;
                 }
@@ -163,7 +193,7 @@ impl App {
         }
     }
 
-    fn go_up(&mut self) {
+    fn go_back(&mut self) {
         if self.stack.len() <= 1 {
             self.running = false;
             return;
