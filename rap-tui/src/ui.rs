@@ -47,6 +47,18 @@ pub fn truncate(s: &str, width: usize) -> String {
     s.chars().take(width).collect()
 }
 
+/// Форматирует секунды как mm:ss (для часов — h:mm:ss).
+pub fn format_time(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
 /// Рисует весь экран: заголовок, список, строку текущего трека, полоску.
 #[allow(clippy::too_many_arguments)]
 pub fn render<W: Write>(
@@ -59,6 +71,8 @@ pub fn render<W: Write>(
     paused: bool,
     progress: f32,
     volume: f32,
+    cur_secs: u64,
+    duration_secs: Option<u64>,
 ) -> io::Result<()> {
     let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
     let (w, h) = (w as usize, h as usize);
@@ -95,16 +109,21 @@ pub fn render<W: Write>(
         }
     }
 
-    // Строка текущего трека
+    // Строка текущего трека: название, время 00:00/03:23, громкость
     let track_line = match track_name {
         Some(name) => {
             let suffix = if paused { strings.paused.as_str() } else { "" };
+            let time = match duration_secs {
+                Some(d) => format!("{}/{}", format_time(cur_secs), format_time(d)),
+                None => format_time(cur_secs),
+            };
             format!(
-                "{}{}{}  |  {}",
+                "{}{}{} |  {}  |  {}",
                 strings.now_playing,
                 name,
                 suffix,
-                strings.volume_with((volume * 100.0).round() as u32)
+                strings.volume_with((volume * 100.0).round() as u32),
+                time
             )
         }
         None => strings.volume_with((volume * 100.0).round() as u32),
@@ -174,5 +193,23 @@ mod tests {
     fn truncate_by_chars() {
         assert_eq!(truncate("абвгде", 3), "абв");
         assert_eq!(truncate("short", 10), "short");
+    }
+
+    #[test]
+    fn time_zero() {
+        assert_eq!(format_time(0), "00:00");
+    }
+
+    #[test]
+    fn time_minutes_seconds() {
+        assert_eq!(format_time(203), "03:23");
+        assert_eq!(format_time(59), "00:59");
+        assert_eq!(format_time(600), "10:00");
+    }
+
+    #[test]
+    fn time_hours() {
+        assert_eq!(format_time(3600), "1:00:00");
+        assert_eq!(format_time(3661), "1:01:01");
     }
 }

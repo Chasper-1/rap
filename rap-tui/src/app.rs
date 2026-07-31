@@ -338,7 +338,7 @@ impl App {
             .expect("stack не пуст")
             .display()
             .to_string();
-        let (track_name, paused, progress) = match &self.track {
+        let (track_name, paused, progress, cur_secs, duration_secs) = match &self.track {
             Some(t) => {
                 let name = t.path.file_name().map(|n| n.to_string_lossy().into_owned());
                 let progress = match t.duration {
@@ -347,9 +347,15 @@ impl App {
                     }
                     _ => 0.0,
                 };
-                (name, self.paused, progress)
+                (
+                    name,
+                    self.paused,
+                    progress,
+                    self.engine.get_current_pos(),
+                    t.duration.map(|d| d.as_secs()),
+                )
             }
-            None => (None, false, 0.0),
+            None => (None, false, 0.0, 0, None),
         };
 
         ui::render(
@@ -362,6 +368,8 @@ impl App {
             paused,
             progress,
             self.volume,
+            cur_secs,
+            duration_secs,
         )
     }
 }
