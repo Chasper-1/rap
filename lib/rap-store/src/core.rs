@@ -46,36 +46,36 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 mod tests {
     use super::*;
 
-    fn test_conn() -> Connection {
+    fn test_conn(name: &str) -> Connection {
         let dir = std::env::temp_dir().join(format!("rap_store_core_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test.db");
+        let path = dir.join(format!("{name}.db"));
         let _ = std::fs::remove_file(&path);
         open(&path).expect("открытие БД")
     }
 
     #[test]
     fn init_idempotent() {
-        let mut conn = test_conn();
+        let mut conn = test_conn("init_idempotent");
         init(&mut conn).expect("повторный init не должен падать");
     }
 
     #[test]
     fn set_get_roundtrip() {
-        let conn = test_conn();
+        let conn = test_conn("set_get_roundtrip");
         set(&conn, "volume", "0.7").unwrap();
         assert_eq!(get(&conn, "volume").unwrap(), Some("0.7".to_string()));
     }
 
     #[test]
     fn get_missing_is_none() {
-        let conn = test_conn();
+        let conn = test_conn("get_missing_is_none");
         assert_eq!(get(&conn, "nope").unwrap(), None);
     }
 
     #[test]
     fn set_overwrites() {
-        let conn = test_conn();
+        let conn = test_conn("set_overwrites");
         set(&conn, "lang", "ru").unwrap();
         set(&conn, "lang", "en").unwrap();
         assert_eq!(get(&conn, "lang").unwrap(), Some("en".to_string()));

@@ -55,6 +55,40 @@ impl App {
         let volume = store.get_volume().await.unwrap_or(1.0);
         let engine = AudioEngine::new();
         engine.set_volume(volume).await;
+
+        // Продолжение с места, где остановились в прошлый раз.
+        let resume = store.get_resume().await;
+        let mut track = None;
+        let mut selected = 0;
+        if let Some((path, pos)) = resume {
+            let path_buf = PathBuf::from(&path);
+            if path_buf.exists() {
+                engine.play(&path).await;
+                engine.seek_to(pos).await;
+                let path2 = path_buf.clone();
+                let duration =
+                    rap_engine::tokio::task::spawn_blocking(move || probe_duration(&path2))
+                        .await
+                        .ok()
+                        .flatten();
+                // Если файл есть в текущем списке — очередь продолжается с него,
+                // иначе — играем одиночно (после него очередь заканчивается).
+                let index = audio_files
+                    .iter()
+                    .position(|p| *p == path_buf)
+                    .unwrap_or(audio_files.len());
+                if let Some(i) = entries.iter().position(|e| e.path == path_buf) {
+                    selected = i;
+                }
+                track = Some(Track {
+                    path: path_buf,
+                    duration,
+                    index,
+                    started: Instant::now(),
+                });
+            }
+        }
+
         Self {
             strings,
             engine,
@@ -62,8 +96,8 @@ impl App {
             stack: vec![root],
             entries,
             audio_files,
-            selected: 0,
-            track: None,
+            selected,
+            track,
             paused: false,
             volume,
             running: true,
@@ -85,6 +119,17 @@ impl App {
             }
             self.on_tick().await;
             let _ = self.render();
+        }
+        // Сохраняем позицию текущего трека при выходе
+        match &self.track {
+            Some(t) if !self.engine.is_empty() => {
+                self.store
+                    .set_resume(&t.path.display().to_string(), self.engine.get_current_pos())
+                    .await;
+            }
+            _ => {
+                self.store.clear_resume().await;
+            }
         }
         self.engine.shutdown().await;
         self.store.shutdown();
@@ -257,8 +302,10 @@ impl App {
         match queue::next_index(self.audio_files.len(), track.index) {
             Some(next) => self.play_at(next).await,
             None => {
+                // Очередь завершилась — в следующий раз начинаем с нуля
                 self.track = None;
                 self.paused = false;
+                self.store.clear_resume().await;
             }
         }
     }
