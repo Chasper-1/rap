@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 crossterm = "0.29.0"
 rap-engine = { path = "../rap-engine" }
+rap-store = { path = "../lib/rap-store" }
 
 tokio.workspace = true

@@ -7,3 +7,4 @@ header=Папка: {path}
 empty_dir=Пусто
 now_playing=Сейчас играет: 
 paused= (пауза)
+volume=Громкость: {vol}%

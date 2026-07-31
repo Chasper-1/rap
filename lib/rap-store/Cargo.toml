@@ -1,0 +1,9 @@
+[package]
+name = "rap-store"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+tokio.workspace = true
+rusqlite.workspace = true

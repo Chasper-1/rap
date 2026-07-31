@@ -7,3 +7,4 @@ header=Folder: {path}
 empty_dir=Empty
 now_playing=Now playing: 
 paused= (paused)
+volume=Volume: {vol}%

@@ -15,6 +15,7 @@ pub struct Strings {
     pub empty_dir: String,
     pub now_playing: String,
     pub paused: String,
+    pub volume: String,
 }
 
 impl Default for Strings {
@@ -33,6 +34,7 @@ impl Strings {
             empty_dir: "Пусто".into(),
             now_playing: "Сейчас играет: ".into(),
             paused: " (пауза)".into(),
+            volume: "Громкость: {vol}%".into(),
         }
     }
 
@@ -75,6 +77,7 @@ impl Strings {
             "empty_dir" => self.empty_dir = value.into(),
             "now_playing" => self.now_playing = value.into(),
             "paused" => self.paused = value.into(),
+            "volume" => self.volume = value.into(),
             _ => {}
         }
     }
@@ -85,6 +88,10 @@ impl Strings {
 
     pub fn header_with(&self, path: &str) -> String {
         self.header.replace("{path}", path)
+    }
+
+    pub fn volume_with(&self, volume_pct: u32) -> String {
+        self.volume.replace("{vol}", &volume_pct.to_string())
     }
 }
 

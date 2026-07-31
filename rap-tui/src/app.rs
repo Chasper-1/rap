@@ -7,6 +7,7 @@ use rap_engine::AudioEngine;
 use rap_engine::probe::probe_duration;
 use rap_engine::tokio::select;
 use rap_engine::tokio::time::sleep;
+use rap_store::Store;
 
 use crate::i18n::Strings;
 use crate::queue;
@@ -19,6 +20,8 @@ const TICK: Duration = Duration::from_millis(150);
 const START_GRACE: Duration = Duration::from_secs(2);
 /// Порог двойного клика мыши.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// Шаг изменения громкости.
+const VOLUME_STEP: f32 = 0.05;
 
 struct Track {
     path: PathBuf,
@@ -30,29 +33,37 @@ struct Track {
 pub struct App {
     strings: Strings,
     engine: AudioEngine,
+    store: Store,
     stack: Vec<PathBuf>,
     entries: Vec<Entry>,
     audio_files: Vec<PathBuf>,
     selected: usize,
     track: Option<Track>,
     paused: bool,
+    volume: f32,
     running: bool,
     last_click: Option<(usize, Instant)>,
 }
 
 impl App {
-    pub fn new(strings: Strings, root: PathBuf) -> Self {
+    pub async fn new(strings: Strings, root: PathBuf) -> Self {
         let entries = scanner::scan_dir(&root).unwrap_or_default();
         let audio_files = scanner::audio_list(&entries);
+        let store = Store::open();
+        let volume = store.get_volume().await.unwrap_or(1.0);
+        let engine = AudioEngine::new();
+        engine.set_volume(volume).await;
         Self {
             strings,
-            engine: AudioEngine::new(),
+            engine,
+            store,
             stack: vec![root],
             entries,
             audio_files,
             selected: 0,
             track: None,
             paused: false,
+            volume,
             running: true,
             last_click: None,
         }
@@ -74,6 +85,7 @@ impl App {
             let _ = self.render();
         }
         self.engine.shutdown().await;
+        self.store.shutdown();
     }
 
     async fn handle(&mut self, event: Event) {
@@ -98,8 +110,16 @@ impl App {
             KeyCode::Backspace | KeyCode::Left => self.go_up(),
             KeyCode::Char('q') => self.running = false,
             KeyCode::Char(' ') => self.toggle_pause().await,
+            KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(VOLUME_STEP).await,
+            KeyCode::Char('-') | KeyCode::Char('_') => self.change_volume(-VOLUME_STEP).await,
             _ => {}
         }
+    }
+
+    async fn change_volume(&mut self, delta: f32) {
+        self.volume = (self.volume + delta).clamp(0.0, 1.0);
+        self.engine.set_volume(self.volume).await;
+        self.store.set_volume(self.volume).await;
     }
 
     async fn on_mouse(&mut self, kind: MouseEventKind, row: u16) {
@@ -256,6 +276,7 @@ impl App {
             track_name.as_deref(),
             paused,
             progress,
+            self.volume,
         )
     }
 }

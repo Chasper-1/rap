@@ -38,6 +38,7 @@ pub fn render<W: Write>(
     track_name: Option<&str>,
     paused: bool,
     progress: f32,
+    volume: f32,
 ) -> io::Result<()> {
     let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
     let (w, h) = (w as usize, h as usize);
@@ -78,9 +79,15 @@ pub fn render<W: Write>(
     let track_line = match track_name {
         Some(name) => {
             let suffix = if paused { strings.paused.as_str() } else { "" };
-            format!("{}{}{}", strings.now_playing, name, suffix)
+            format!(
+                "{}{}{}  |  {}",
+                strings.now_playing,
+                name,
+                suffix,
+                strings.volume_with((volume * 100.0).round() as u32)
+            )
         }
-        None => String::new(),
+        None => strings.volume_with((volume * 100.0).round() as u32),
     };
     queue!(
         out,
