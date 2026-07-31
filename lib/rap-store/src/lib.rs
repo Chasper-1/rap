@@ -16,12 +16,17 @@ use tokio::sync::{mpsc, oneshot};
 /// Ключи настроек в БД.
 const KEY_VOLUME: &str = "volume";
 const KEY_LANG: &str = "lang";
+const KEY_RESUME_PATH: &str = "resume_path";
+const KEY_RESUME_POS: &str = "resume_pos";
 
 enum Cmd {
     GetVolume(oneshot::Sender<Option<f32>>),
     SetVolume(f32),
     GetLang(oneshot::Sender<Option<String>>),
     SetLang(String),
+    GetResume(oneshot::Sender<Option<(String, u64)>>),
+    SetResume(String, u64),
+    ClearResume,
 }
 
 /// Асинхронный доступ к настройкам.
@@ -99,6 +104,24 @@ impl Store {
         self.send(Cmd::SetLang(lang.to_string()));
     }
 
+    /// Сохранённая позиция воспроизведения: (путь к файлу, секунда).
+    pub async fn get_resume(&self) -> Option<(String, u64)> {
+        let (tx, rx) = oneshot::channel();
+        if self.send(Cmd::GetResume(tx)) {
+            rx.await.ok().flatten()
+        } else {
+            None
+        }
+    }
+
+    pub async fn set_resume(&self, path: &str, pos_secs: u64) {
+        self.send(Cmd::SetResume(path.to_string(), pos_secs));
+    }
+
+    pub async fn clear_resume(&self) {
+        self.send(Cmd::ClearResume);
+    }
+
     fn send(&self, cmd: Cmd) -> bool {
         match &self.tx {
             Some(tx) => tx.send(cmd).is_ok(),
@@ -128,6 +151,25 @@ fn worker(mut rx: mpsc::UnboundedReceiver<Cmd>, conn: Connection) {
             }
             Cmd::SetLang(lang) => {
                 let _ = core::set(&conn, KEY_LANG, &lang);
+            }
+            Cmd::GetResume(tx) => {
+                let value = match core::get(&conn, KEY_RESUME_PATH).ok().flatten() {
+                    Some(path) => core::get(&conn, KEY_RESUME_POS)
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(|pos| (path, pos)),
+                    None => None,
+                };
+                let _ = tx.send(value);
+            }
+            Cmd::SetResume(path, pos) => {
+                let _ = core::set(&conn, KEY_RESUME_PATH, &path);
+                let _ = core::set(&conn, KEY_RESUME_POS, &pos.to_string());
+            }
+            Cmd::ClearResume => {
+                let _ = core::set(&conn, KEY_RESUME_PATH, "");
+                let _ = core::set(&conn, KEY_RESUME_POS, "");
             }
         }
     }
@@ -197,6 +239,39 @@ mod tests {
         let mut store = Store::open_at(&path);
         assert_eq!(store.get_volume().await, Some(0.4));
         assert_eq!(store.get_lang().await, Some("ru".to_string()));
+        store.shutdown();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn resume_roundtrip() {
+        let path = test_path("resume");
+        let mut store = Store::open_at(&path);
+        assert_eq!(store.get_resume().await, None);
+        store.set_resume("/music/song.mp3", 42).await;
+        assert_eq!(
+            store.get_resume().await,
+            Some(("/music/song.mp3".to_string(), 42))
+        );
+        store.clear_resume().await;
+        assert_eq!(store.get_resume().await, None);
+        store.shutdown();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn resume_survives_reopen() {
+        let path = test_path("resume_reopen");
+        {
+            let mut store = Store::open_at(&path);
+            store.set_resume("/music/song.flac", 7).await;
+            store.shutdown();
+        }
+        let mut store = Store::open_at(&path);
+        assert_eq!(
+            store.get_resume().await,
+            Some(("/music/song.flac".to_string(), 7))
+        );
         store.shutdown();
         let _ = std::fs::remove_file(&path);
     }
