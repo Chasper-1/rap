@@ -69,8 +69,14 @@ impl AudioEngine {
                                 // при зажатой клавише повторные сдвиги не «застревают»
                                 // на устаревшей позиции из статуса.
                                 let current = player.get_pos();
-                                let target = (current + offset as f64).max(0.0);
-                                let _ = player.try_seek(Duration::from_secs_f64(target));
+                                let target = if offset >= 0 {
+                                    current
+                                        .saturating_add(Duration::from_secs(offset as u64))
+                                } else {
+                                    current
+                                        .saturating_sub(Duration::from_secs(offset.unsigned_abs()))
+                                };
+                                let _ = player.try_seek(target);
                             }
                         }
                     }
