@@ -63,6 +63,11 @@ impl AudioEngine {
             // плеер возвращается именно к ней.
             let mut target_gain: f32 = 1.0;
 
+            // Таймер статуса живёт вне select: в отличие от sleep(), который
+            // пересоздаётся на каждой команде, interval срабатывает строго
+            // каждые 50 мс даже при плотном потоке команд (зажатая клавиша).
+            let mut status_timer = tokio::time::interval(Duration::from_millis(50));
+
             loop {
                 tokio::select! {
                     // Команды от UI
@@ -110,6 +115,13 @@ impl AudioEngine {
                             }
                             AudioCmd::Seek(d) => {
                                 let _ = player.try_seek(d);
+                                // Сразу публикуем новую позицию, не дожидаясь тика статуса
+                                let _ = status_tx.send(EngineStatus {
+                                    position: player.get_pos(),
+                                    is_paused: player.is_paused(),
+                                    volume: player.volume(),
+                                    is_empty: player.empty(),
+                                });
                             }
                             AudioCmd::SeekRelative(offset) => {
                                 // Считаем от реальной позиции плеера в его же потоке:
@@ -124,6 +136,13 @@ impl AudioEngine {
                                         .saturating_sub(Duration::from_secs(offset.unsigned_abs()))
                                 };
                                 let _ = player.try_seek(target);
+                                // Сразу публикуем новую позицию, не дожидаясь тика статуса
+                                let _ = status_tx.send(EngineStatus {
+                                    position: player.get_pos(),
+                                    is_paused: player.is_paused(),
+                                    volume: player.volume(),
+                                    is_empty: player.empty(),
+                                });
                             }
                         }
                     }
@@ -136,7 +155,7 @@ impl AudioEngine {
                     }
                     // Периодическое обновление статуса (50 мс — полоска
                     // прогресса движется плавно, в т.ч. при зажатой перемотке)
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                    _ = status_timer.tick() => {
                         let _ = status_tx.send(EngineStatus {
                             position: player.get_pos(),
                             is_paused: player.is_paused(),

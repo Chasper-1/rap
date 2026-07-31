@@ -183,16 +183,19 @@ impl App {
         self.engine.seek_relative(offset_secs).await;
     }
 
-    /// Перемотка по клику на полоске прогресса: позиция пропорциональна столбцу.
+    /// Перемотка по клику на полоске прогресса: позиция пропорциональна
+    /// столбцу. Полоска обрамлена '[ ]' — клик считается по внутренней части.
     async fn seek_to_click(&mut self, column: u16, width: u16) {
         let Some(duration) = self.track.as_ref().and_then(|t| t.duration) else {
             return;
         };
-        if width == 0 {
+        // Внутренняя часть полоски: без скобок '[ ]'
+        if width <= 2 || column == 0 {
             return;
         }
-        let ratio = column as f32 / width as f32;
-        let secs = (ratio * duration.as_secs_f32()) as u64;
+        let inner = width - 2;
+        let pos = column.saturating_sub(1).min(inner) as u32;
+        let secs = (pos as f64 / inner as f64 * duration.as_secs_f64()) as u64;
         self.engine.seek_to(secs).await;
     }
 

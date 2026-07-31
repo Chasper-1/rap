@@ -8,32 +8,24 @@ use crossterm::terminal::{Clear, ClearType};
 use crate::i18n::Strings;
 use crate::scanner::Entry;
 
-/// Частичные блоки заполнения (1/8 .. 7/8 ширины символа) для
-/// точного позиционирования края полоски.
-const PARTIAL_BLOCKS: [char; 7] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-
-/// Полоска прогресса с точностью 1/8 символа: заполненная часть — '█'
-/// (последний символ может быть частичным блоком ▏..▉), пустая — '░'.
-/// Без цветов — видна в любой теме терминала. progress — 0..1.
+/// Полоска прогресса: границы '[ ]' схематично обозначают её место,
+/// заполнение — '█', пустая часть — пробелы. Без цветов — видна в любой
+/// теме терминала. width — общая ширина, включая скобки. progress — 0..1.
 pub fn progress_bar(progress: f32, width: usize) -> String {
-    if width == 0 {
+    if width < 2 {
         return String::new();
     }
-    // Ширина в восьмушках символа
-    let eighths = (progress.clamp(0.0, 1.0) * width as f32 * 8.0).round() as usize;
-    let full = eighths / 8;
-    let rem = eighths % 8;
+    let inner = width - 2;
+    let filled = (progress.clamp(0.0, 1.0) * inner as f32).round() as usize;
     let mut s = String::with_capacity(width);
-    for _ in 0..full {
+    s.push('[');
+    for _ in 0..filled {
         s.push('█');
     }
-    if rem > 0 {
-        s.push(PARTIAL_BLOCKS[rem - 1]);
+    for _ in filled..inner {
+        s.push(' ');
     }
-    let empty = width.saturating_sub(full + usize::from(rem > 0));
-    for _ in 0..empty {
-        s.push('░');
-    }
+    s.push(']');
     s
 }
 
@@ -127,40 +119,38 @@ mod tests {
 
     #[test]
     fn progress_zero() {
-        assert_eq!(progress_bar(0.0, 10), "░░░░░░░░░░");
+        assert_eq!(progress_bar(0.0, 10), "[        ]");
     }
 
     #[test]
     fn progress_full() {
-        assert_eq!(progress_bar(1.0, 10), "██████████");
+        assert_eq!(progress_bar(1.0, 10), "[████████]");
     }
 
     #[test]
     fn progress_half_even() {
-        assert_eq!(progress_bar(0.5, 10), "█████░░░░░");
+        assert_eq!(progress_bar(0.5, 10), "[████    ]");
     }
 
     #[test]
     fn progress_zero_width() {
         assert_eq!(progress_bar(0.5, 0), "");
+        assert_eq!(progress_bar(0.5, 1), "");
+        assert_eq!(progress_bar(0.5, 2), "[]");
     }
 
     #[test]
     fn progress_clamped() {
-        assert_eq!(progress_bar(1.5, 5), "█████");
-        assert_eq!(progress_bar(-0.5, 5), "░░░░░");
+        assert_eq!(progress_bar(1.5, 5), "[███]");
+        assert_eq!(progress_bar(-0.5, 5), "[   ]");
     }
 
     #[test]
-    fn progress_partial_eighth() {
-        // 0.05 * 10 = 0.5 символа = 4/8 → частичный блок '▌'
-        assert_eq!(progress_bar(0.05, 10), "▌░░░░░░░░░");
-        // 0.075 * 10 = 0.75 символа = 6/8 → '▊'
-        assert_eq!(progress_bar(0.075, 10), "▊░░░░░░░░░");
-        // 1.5 символа: 1 полный + 4/8 → '█▌'
-        assert_eq!(progress_bar(0.15, 10), "█▌░░░░░░░░");
-        // 1.25 символа: 1 полный + 2/8 → '█▎'
-        assert_eq!(progress_bar(0.125, 10), "█▎░░░░░░░░");
+    fn progress_rounding() {
+        // 0.1 * 8 = 0.8 → 1 символ
+        assert_eq!(progress_bar(0.1, 10), "[█       ]");
+        // 0.95 * 8 = 7.6 → 8 символов
+        assert_eq!(progress_bar(0.95, 10), "[████████]");
     }
 
     #[test]
