@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
 use crossterm::style::{Attribute, Print};
+use crossterm::terminal::{Clear, ClearType};
 
 use crate::i18n::Strings;
 use crate::scanner::Entry;
@@ -46,7 +47,8 @@ pub fn render<W: Write>(
     queue!(
         out,
         MoveTo(0, 0),
-        Print(truncate(&strings.header_with(path), w))
+        Print(truncate(&strings.header_with(path), w)),
+        Clear(ClearType::UntilNewLine)
     )?;
 
     // Список
@@ -64,15 +66,15 @@ pub fn render<W: Write>(
                 out,
                 Print(Attribute::Reverse),
                 Print(&line),
-                Print(Attribute::Reset)
+                Print(Attribute::Reset),
+                Clear(ClearType::UntilNewLine)
             )?;
         } else {
-            queue!(out, Print(&line))?;
+            queue!(out, Print(&line), Clear(ClearType::UntilNewLine))?;
         }
     }
 
     // Строка текущего трека
-    queue!(out, MoveTo(0, h.saturating_sub(2) as u16))?;
     let track_line = match track_name {
         Some(name) => {
             let suffix = if paused { strings.paused.as_str() } else { "" };
@@ -80,7 +82,12 @@ pub fn render<W: Write>(
         }
         None => String::new(),
     };
-    queue!(out, Print(truncate(&track_line, w)))?;
+    queue!(
+        out,
+        MoveTo(0, h.saturating_sub(2) as u16),
+        Print(truncate(&track_line, w)),
+        Clear(ClearType::UntilNewLine)
+    )?;
 
     // Полоска прогресса
     queue!(
