@@ -5,18 +5,18 @@ use std::io::{Read, Seek};
 use std::num::NonZero;
 use std::time::Duration;
 
-/// Максимальный кадр Opus при 48 кГц: 120 мс * 48000 = 5760 сэмплов на канал.
+// Максимальный кадр Opus при 48 кГц: 120 мс * 48000 = 5760 сэмплов на канал.
 const MAX_FRAME_SAMPLES: usize = 5760;
 
 pub struct OpusSource<R: Read + Seek> {
     packet_reader: PacketReader<R>,
     decoder: OpusDecoder,
-    /// Буфер переиспользуется между кадрами (выделяется один раз).
+    // Буфер переиспользуется между кадрами (выделяется один раз).
     sample_buffer: Vec<f32>,
-    /// Длина декодированных сэмплов в буфере (на все каналы).
+    // Длина декодированных сэмплов в буфере (на все каналы).
     decoded_len: usize,
     buffer_pos: usize,
-    /// Pre-skip из OpusHead: пропускается в начале (и после seek сбрасывается).
+    // Pre-skip из OpusHead: пропускается в начале (и после seek сбрасывается).
     skip_remaining: usize,
     sample_rate: u32,
     channels: u16,
@@ -54,7 +54,7 @@ impl<R: Read + Seek> OpusSource<R> {
         })
     }
 
-    /// Декодирует следующий аудиопакет в буфер. Возвращает `false` на конце потока.
+    // Декодирует следующий аудиопакет в буфер. Возвращает `false` на конце потока.
     fn fill(&mut self) -> bool {
         loop {
             match self.packet_reader.read_packet() {

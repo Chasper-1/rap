@@ -5,7 +5,7 @@
 use rusqlite::Connection;
 use std::path::Path;
 
-/// Создаёт схему БД, если её ещё нет.
+// Создаёт схему БД, если её ещё нет.
 pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS settings (
@@ -15,7 +15,7 @@ pub fn init(conn: &mut Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// Читает значение настройки по ключу.
+// Читает значение настройки по ключу.
 pub fn get(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
     let mut rows = stmt.query([key])?;
@@ -25,7 +25,7 @@ pub fn get(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
     }
 }
 
-/// Записывает значение настройки (upsert по ключу).
+// Записывает значение настройки (upsert по ключу).
 pub fn set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -35,7 +35,7 @@ pub fn set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Открывает соединение с БД и инициализирует схему.
+// Открывает соединение с БД и инициализирует схему.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let mut conn = Connection::open(path)?;
     init(&mut conn)?;

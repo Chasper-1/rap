@@ -11,13 +11,13 @@ use rodio::Player;
 use rodio::cpal::traits::HostTrait;
 use rodio::stream::DeviceSinkBuilder;
 
-/// Длительность плавного изменения громкости (фейд-вход/выход).
+// Длительность плавного изменения громкости (фейд-вход/выход).
 const FADE: Duration = Duration::from_millis(40);
-/// Число шагов фейда.
+// Число шагов фейда.
 const FADE_STEPS: u32 = 12;
 
-/// Плавно (но быстро) меняет громкость плеера от текущей к `target`.
-/// Вызывается только из потока движка.
+// Плавно (но быстро) меняет громкость плеера от текущей к `target`.
+// Вызывается только из потока движка.
 async fn fade_to(player: &Player, target: f32) {
     let from = player.volume();
     if (from - target).abs() < 1e-4 {
@@ -31,8 +31,8 @@ async fn fade_to(player: &Player, target: f32) {
     player.set_volume(target);
 }
 
-/// Цикл обработки команд движка. Любая ошибка (мёртвый интерфейс,
-/// сбой декодера) прерывает цикл и всплывает к месту запуска задачи.
+// Цикл обработки команд движка. Любая ошибка (мёртвый интерфейс,
+// сбой декодера) прерывает цикл и всплывает к месту запуска задачи.
 async fn engine_loop(
     mut cmd_rx: tokio_mpsc::Receiver<AudioCmd>,
     status_tx: watch::Sender<EngineStatus>,
@@ -219,7 +219,7 @@ impl AudioEngine {
             .map_err(|_| anyhow!("движок не принял команду stop"))
     }
 
-    /// Запуск трека сразу на паузе (для продолжения с сохранённой позиции).
+    // Запуск трека сразу на паузе (для продолжения с сохранённой позиции).
     pub async fn play_paused(&self, path: &str, seek_secs: u64) -> anyhow::Result<()> {
         self.cmd_tx
             .send(AudioCmd::PlayPaused {
@@ -280,7 +280,7 @@ impl AudioEngine {
             .map_err(|_| anyhow!("движок не принял команду seek_relative"))
     }
 
-    /// Сигнализирует движку о завершении работы и ждёт его остановки.
+    // Сигнализирует движку о завершении работы и ждёт его остановки.
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         self.shutdown_tx
             .send(true)
@@ -294,7 +294,7 @@ impl AudioEngine {
     }
 }
 
-/// Конвертирует gain (0..1 у rodio) в «человеческий» уровень громкости 0..1.
+// Конвертирует gain (0..1 у rodio) в «человеческий» уровень громкости 0..1.
 pub fn gain_to_volume(gain: f32) -> f32 {
     if gain <= 0.0 {
         return 0.0;
@@ -302,7 +302,7 @@ pub fn gain_to_volume(gain: f32) -> f32 {
     (f32::ln(gain * (f32::exp(5.0) - 1.0) + 1.0) / 5.0).clamp(0.0, 1.0)
 }
 
-/// Конвертирует «человеческий» уровень громкости 0..1 в gain для rodio.
+// Конвертирует «человеческий» уровень громкости 0..1 в gain для rodio.
 pub fn volume_to_gain(vol: f32) -> f32 {
     let v = vol.clamp(0.0, 1.0);
     (f32::exp(v * 5.0) - 1.0) / (f32::exp(5.0) - 1.0)

@@ -13,7 +13,7 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 
-/// Ключи настроек в БД.
+// Ключи настроек в БД.
 const KEY_VOLUME: &str = "volume";
 const KEY_LANG: &str = "lang";
 const KEY_RESUME_PATH: &str = "resume_path";
@@ -29,21 +29,21 @@ enum Cmd {
     ClearResume,
 }
 
-/// Асинхронный доступ к настройкам.
+// Асинхронный доступ к настройкам.
 pub struct Store {
     tx: Option<mpsc::UnboundedSender<Cmd>>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Store {
-    /// Открывает БД в стандартном месте (XDG) и запускает воркер.
-    /// При любой ошибке возвращает «пустое» хранилище: все методы
-    /// безопасно ничего не делают.
+    // Открывает БД в стандартном месте (XDG) и запускает воркер.
+    // При любой ошибке возвращает «пустое» хранилище: все методы
+    // безопасно ничего не делают.
     pub fn open() -> Self {
         Self::open_at(&default_db_path())
     }
 
-    /// Открывает БД по конкретному пути (используется в тестах).
+    // Открывает БД по конкретному пути (используется в тестах).
     pub fn open_at(path: &Path) -> Self {
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
         if std::fs::create_dir_all(dir).is_err() {
@@ -74,7 +74,7 @@ impl Store {
         }
     }
 
-    /// Закрывает канал и дожидается завершения воркера.
+    // Закрывает канал и дожидается завершения воркера.
     pub fn shutdown(&mut self) {
         self.tx = None;
         if let Some(worker) = self.worker.take() {
@@ -110,7 +110,7 @@ impl Store {
         self.send(Cmd::SetLang(lang.to_string()));
     }
 
-    /// Сохранённая позиция воспроизведения: (путь к файлу, секунда).
+    // Сохранённая позиция воспроизведения: (путь к файлу, секунда).
     pub async fn get_resume(&self) -> Option<(String, u64)> {
         let (tx, rx) = oneshot::channel();
         if self.send(Cmd::GetResume(tx)) {
@@ -136,11 +136,11 @@ impl Store {
     }
 }
 
-/// Поток-воркер: единственный владелец соединения.
-///
-/// Ошибки БД прокидываются наверх (`?`) — поток завершается и паникует
-/// в точке запуска с понятным текстом. Ошибка отправки ответа
-/// (`tx.send`) означает, что клиент мёртв: поток немедленно выходит.
+// Поток-воркер: единственный владелец соединения.
+//
+// Ошибки БД прокидываются наверх (`?`) — поток завершается и паникует
+// в точке запуска с понятным текстом. Ошибка отправки ответа
+// (`tx.send`) означает, что клиент мёртв: поток немедленно выходит.
 fn worker(mut rx: mpsc::UnboundedReceiver<Cmd>, conn: Connection) -> rusqlite::Result<()> {
     while let Some(cmd) = rx.blocking_recv() {
         match cmd {
@@ -188,7 +188,7 @@ fn worker(mut rx: mpsc::UnboundedReceiver<Cmd>, conn: Connection) -> rusqlite::R
     Ok(())
 }
 
-/// Стандартное место файла БД: `$XDG_DATA_HOME/rap/rap.db`.
+// Стандартное место файла БД: `$XDG_DATA_HOME/rap/rap.db`.
 pub fn default_db_path() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
