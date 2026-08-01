@@ -8,5 +8,5 @@ tokio.workspace = true
 anyhow.workspace = true
 
 crossterm = "0.29.0"
-rap-engine = { path = "../rap-engine" }
+rap-engine = { path = "../lib/rap-engine" }
 rap-store = { path = "../lib/rap-store" }
