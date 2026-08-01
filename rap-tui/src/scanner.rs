@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Запись списка папки.
+// Запись списка папки.
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub name: String,
@@ -9,10 +9,10 @@ pub struct Entry {
     pub is_dir: bool,
 }
 
-/// Расширения аудиофайлов, которые показываем и играем.
+// Расширения аудиофайлов, которые показываем и играем.
 pub const AUDIO_EXTS: [&str; 7] = ["mp3", "flac", "wav", "ogg", "opus", "m4a", "aac"];
 
-/// Есть ли у имени файла аудио-расширение (регистронезависимо).
+// Есть ли у имени файла аудио-расширение (регистронезависимо).
 pub fn is_audio(name: &str) -> bool {
     let ext = match name.rsplit_once('.') {
         Some((_, e)) => e,
@@ -21,8 +21,8 @@ pub fn is_audio(name: &str) -> bool {
     AUDIO_EXTS.iter().any(|a| a.eq_ignore_ascii_case(ext))
 }
 
-/// Сканирует папку: папки первыми, затем аудиофайлы; внутри групп — по имени.
-/// Неаудио файлы пропускаются. Без индексации и кэшей.
+// Сканирует папку: папки первыми, затем аудиофайлы; внутри групп — по имени.
+// Неаудио файлы пропускаются. Без индексации и кэшей.
 pub fn scan_dir(dir: &Path) -> std::io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for item in fs::read_dir(dir)? {
@@ -49,7 +49,7 @@ pub fn scan_dir(dir: &Path) -> std::io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Список аудиофайлов из сканированной папки (без папок), по порядку списка.
+// Список аудиофайлов из сканированной папки (без папок), по порядку списка.
 pub fn audio_list(entries: &[Entry]) -> Vec<PathBuf> {
     entries
         .iter()

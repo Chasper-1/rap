@@ -68,8 +68,8 @@ async fn main() {
     disable_raw_mode().unwrap_or_else(|e| panic!("не удалось выключить raw mode: {e}"));
 }
 
-/// Разбор аргументов: `rap-tui [путь-к-папке] [--lang код]`.
-/// `--lang` вернётся как `Some`, если был указан.
+// Разбор аргументов: `rap-tui [путь-к-папке] [--lang код]`.
+// `--lang` вернётся как `Some`, если был указан.
 fn parse_args() -> (Option<String>, Option<PathBuf>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     parse_args_from(&args)

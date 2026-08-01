@@ -6,11 +6,11 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
 
-/// Определяет длительность аудиофайла из его заголовков и метаданных,
-/// без полного декодирования.
-///
-/// Возвращает `None`, если формат не распознан или длительность
-/// не указана в метаданных (например, потоковый формат).
+// Определяет длительность аудиофайла из его заголовков и метаданных,
+// без полного декодирования.
+//
+// Возвращает `None`, если формат не распознан или длительность
+// не указана в метаданных (например, потоковый формат).
 pub fn probe_duration(path: &Path) -> Option<Duration> {
     let file = File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -43,7 +43,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// Генерирует простой WAV-файл (PCM 16-bit mono) заданной длительности.
+    // Генерирует простой WAV-файл (PCM 16-bit mono) заданной длительности.
     fn write_wav(path: &Path, sample_rate: u32, seconds: u32) {
         let n_samples = sample_rate * seconds;
         let data_len = n_samples * 2;
