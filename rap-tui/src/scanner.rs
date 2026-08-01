@@ -75,7 +75,9 @@ mod tests {
     #[test]
     fn scan_dir_order_and_filter() {
         let dir = std::env::temp_dir().join(format!("rap_scan_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).expect("тестовая папка не удалилась");
+        }
         fs::create_dir_all(&dir).unwrap();
         fs::create_dir(dir.join("zz_folder")).unwrap();
         fs::create_dir(dir.join("aa_folder")).unwrap();
@@ -90,15 +92,17 @@ mod tests {
         let audio = audio_list(&entries);
         assert_eq!(audio.len(), 2);
         assert!(audio[0].ends_with("a.wav"));
-        let _ = fs::remove_dir_all(&dir);
+        fs::remove_dir_all(&dir).expect("тестовая папка не удалилась");
     }
 
     #[test]
     fn scan_empty_dir() {
         let dir = std::env::temp_dir().join(format!("rap_scan_empty_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        if dir.exists() {
+            fs::remove_dir_all(&dir).expect("тестовая папка не удалилась");
+        }
         fs::create_dir_all(&dir).unwrap();
         assert!(scan_dir(&dir).unwrap().is_empty());
-        let _ = fs::remove_dir_all(&dir);
+        fs::remove_dir_all(&dir).expect("тестовая папка не удалилась");
     }
 }

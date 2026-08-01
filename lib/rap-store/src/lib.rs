@@ -63,7 +63,11 @@ impl Store {
         };
 
         let (tx, rx) = mpsc::unbounded_channel::<Cmd>();
-        let worker = std::thread::spawn(move || worker(rx, conn));
+        let worker = std::thread::spawn(move || {
+            if let Err(e) = worker(rx, conn) {
+                panic!("воркер хранилища завершился с ошибкой: {e}");
+            }
+        });
         Self {
             tx: Some(tx),
             worker: Some(worker),
@@ -74,7 +78,9 @@ impl Store {
     pub fn shutdown(&mut self) {
         self.tx = None;
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            if worker.join().is_err() {
+                eprintln!("[store] воркер завершился с ошибкой");
+            }
         }
     }
 
@@ -131,48 +137,55 @@ impl Store {
 }
 
 /// Поток-воркер: единственный владелец соединения.
-fn worker(mut rx: mpsc::UnboundedReceiver<Cmd>, conn: Connection) {
+///
+/// Ошибки БД прокидываются наверх (`?`) — поток завершается и паникует
+/// в точке запуска с понятным текстом. Ошибка отправки ответа
+/// (`tx.send`) означает, что клиент мёртв: поток немедленно выходит.
+fn worker(mut rx: mpsc::UnboundedReceiver<Cmd>, conn: Connection) -> rusqlite::Result<()> {
     while let Some(cmd) = rx.blocking_recv() {
         match cmd {
             Cmd::GetVolume(tx) => {
-                let value = core::get(&conn, KEY_VOLUME)
-                    .ok()
-                    .flatten()
+                let value = core::get(&conn, KEY_VOLUME)?
                     .and_then(|s| s.parse::<f32>().ok())
                     .map(|v| v.clamp(0.0, 1.0));
-                let _ = tx.send(value);
+                if tx.send(value).is_err() {
+                    break;
+                }
             }
             Cmd::SetVolume(v) => {
-                let _ = core::set(&conn, KEY_VOLUME, &v.to_string());
+                core::set(&conn, KEY_VOLUME, &v.to_string())?;
             }
             Cmd::GetLang(tx) => {
-                let value = core::get(&conn, KEY_LANG).ok().flatten();
-                let _ = tx.send(value);
+                let value = core::get(&conn, KEY_LANG)?;
+                if tx.send(value).is_err() {
+                    break;
+                }
             }
             Cmd::SetLang(lang) => {
-                let _ = core::set(&conn, KEY_LANG, &lang);
+                core::set(&conn, KEY_LANG, &lang)?;
             }
             Cmd::GetResume(tx) => {
-                let value = match core::get(&conn, KEY_RESUME_PATH).ok().flatten() {
-                    Some(path) => core::get(&conn, KEY_RESUME_POS)
-                        .ok()
-                        .flatten()
+                let value = match core::get(&conn, KEY_RESUME_PATH)? {
+                    Some(path) => core::get(&conn, KEY_RESUME_POS)?
                         .and_then(|s| s.parse::<u64>().ok())
                         .map(|pos| (path, pos)),
                     None => None,
                 };
-                let _ = tx.send(value);
+                if tx.send(value).is_err() {
+                    break;
+                }
             }
             Cmd::SetResume(path, pos) => {
-                let _ = core::set(&conn, KEY_RESUME_PATH, &path);
-                let _ = core::set(&conn, KEY_RESUME_POS, &pos.to_string());
+                core::set(&conn, KEY_RESUME_PATH, &path)?;
+                core::set(&conn, KEY_RESUME_POS, &pos.to_string())?;
             }
             Cmd::ClearResume => {
-                let _ = core::set(&conn, KEY_RESUME_PATH, "");
-                let _ = core::set(&conn, KEY_RESUME_POS, "");
+                core::set(&conn, KEY_RESUME_PATH, "")?;
+                core::set(&conn, KEY_RESUME_POS, "")?;
             }
         }
     }
+    Ok(())
 }
 
 /// Стандартное место файла БД: `$XDG_DATA_HOME/rap/rap.db`.
@@ -203,7 +216,7 @@ mod tests {
         store.set_volume(0.7).await;
         assert_eq!(store.get_volume().await, Some(0.7));
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[tokio::test]
@@ -213,7 +226,7 @@ mod tests {
         store.set_volume(5.0).await;
         assert_eq!(store.get_volume().await, Some(1.0));
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[tokio::test]
@@ -224,7 +237,7 @@ mod tests {
         store.set_lang("en").await;
         assert_eq!(store.get_lang().await, Some("en".to_string()));
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[tokio::test]
@@ -240,7 +253,7 @@ mod tests {
         assert_eq!(store.get_volume().await, Some(0.4));
         assert_eq!(store.get_lang().await, Some("ru".to_string()));
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[tokio::test]
@@ -256,7 +269,7 @@ mod tests {
         store.clear_resume().await;
         assert_eq!(store.get_resume().await, None);
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[tokio::test]
@@ -273,6 +286,6 @@ mod tests {
             Some(("/music/song.flac".to_string(), 7))
         );
         store.shutdown();
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 }

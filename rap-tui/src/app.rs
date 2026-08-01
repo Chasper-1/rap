@@ -32,6 +32,12 @@ struct Track {
     started: Instant,
 }
 
+/// Падает с понятным сообщением, если движок не принял команду
+/// (интерфейс мёртв — продолжать работу нельзя).
+fn or_die(res: anyhow::Result<()>, what: &str) {
+    res.unwrap_or_else(|e| panic!("{what}: {e}"));
+}
+
 pub struct App {
     strings: Strings,
     engine: AudioEngine,
@@ -49,12 +55,15 @@ pub struct App {
 
 impl App {
     pub async fn new(strings: Strings, root: PathBuf) -> Self {
-        let entries = scanner::scan_dir(&root).unwrap_or_default();
+        let entries = scanner::scan_dir(&root).expect("не удалось прочитать папку");
         let audio_files = scanner::audio_list(&entries);
         let store = Store::open();
         let volume = store.get_volume().await.unwrap_or(1.0);
         let engine = AudioEngine::new();
-        engine.set_volume(volume).await;
+        or_die(
+            engine.set_volume(volume).await,
+            "не удалось применить громкость",
+        );
 
         // Продолжение с места, где остановились в прошлый раз.
         // Трек запускается СРАЗУ в паузе одной командой движка:
@@ -66,7 +75,10 @@ impl App {
         if let Some((path, pos)) = resume {
             let path_buf = PathBuf::from(&path);
             if path_buf.exists() {
-                engine.play_paused(&path, pos).await;
+                or_die(
+                    engine.play_paused(&path, pos).await,
+                    "не удалось запустить трек на паузе",
+                );
                 paused = true;
                 let path2 = path_buf.clone();
                 let duration =
@@ -121,7 +133,8 @@ impl App {
                 self.handle(event).await;
             }
             self.on_tick().await;
-            let _ = self.render();
+            self.render()
+                .unwrap_or_else(|e| panic!("ошибка отрисовки: {e}"));
         }
         // Сохраняем позицию текущего трека при выходе
         match &self.track {
@@ -134,7 +147,7 @@ impl App {
                 self.store.clear_resume().await;
             }
         }
-        self.engine.shutdown().await;
+        or_die(self.engine.shutdown().await, "движок не остановился");
         self.store.shutdown();
     }
 
@@ -172,7 +185,10 @@ impl App {
 
     async fn change_volume(&mut self, delta: f32) {
         self.volume = (self.volume + delta).clamp(0.0, 1.0);
-        self.engine.set_volume(self.volume).await;
+        or_die(
+            self.engine.set_volume(self.volume).await,
+            "не удалось изменить громкость",
+        );
         self.store.set_volume(self.volume).await;
     }
 
@@ -180,7 +196,10 @@ impl App {
         if self.track.is_none() {
             return;
         }
-        self.engine.seek_relative(offset_secs).await;
+        or_die(
+            self.engine.seek_relative(offset_secs).await,
+            "не удалось перемотать",
+        );
     }
 
     /// Перемотка по клику на полоске прогресса: позиция пропорциональна
@@ -196,7 +215,10 @@ impl App {
         let inner = width - 2;
         let pos = column.saturating_sub(1).min(inner) as u32;
         let secs = (pos as f64 / inner as f64 * duration.as_secs_f64()) as u64;
-        self.engine.seek_to(secs).await;
+        or_die(
+            self.engine.seek_to(secs).await,
+            "не удалось перемотать по клику",
+        );
     }
 
     async fn on_mouse(&mut self, kind: MouseEventKind, row: u16, column: u16) {
@@ -257,7 +279,7 @@ impl App {
 
     fn rescan(&mut self) {
         let dir = self.stack.last().expect("stack не пуст");
-        self.entries = scanner::scan_dir(dir).unwrap_or_default();
+        self.entries = scanner::scan_dir(dir).expect("не удалось прочитать папку");
         self.audio_files = scanner::audio_list(&self.entries);
         self.selected = 0;
     }
@@ -267,9 +289,9 @@ impl App {
             return;
         }
         if self.paused {
-            self.engine.resume().await;
+            or_die(self.engine.resume().await, "не удалось продолжить");
         } else {
-            self.engine.pause().await;
+            or_die(self.engine.pause().await, "не удалось поставить на паузу");
         }
         self.paused = !self.paused;
     }
@@ -279,7 +301,10 @@ impl App {
             return;
         };
         let path_str = path.to_string_lossy().into_owned();
-        self.engine.play(&path_str).await;
+        or_die(
+            self.engine.play(&path_str).await,
+            "не удалось запустить трек",
+        );
 
         let path2 = path.clone();
         let duration = select! {

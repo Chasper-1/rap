@@ -74,7 +74,7 @@ mod tests {
         write_wav(&path, 44100, 1);
         let dur = probe_duration(&path).expect("длительность должна определиться");
         assert!((dur.as_secs_f64() - 1.0).abs() < 0.05);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[test]
@@ -84,7 +84,7 @@ mod tests {
         write_wav(&path, 22050, 10);
         let dur = probe_duration(&path).expect("длительность должна определиться");
         assert!((dur.as_secs_f64() - 10.0).abs() < 0.05);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 
     #[test]
@@ -101,6 +101,6 @@ mod tests {
         let path = dir.join("rap_probe_test.txt");
         std::fs::write(&path, b"hello").unwrap();
         assert_eq!(probe_duration(&path), None);
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).expect("тестовый файл не удалился");
     }
 }

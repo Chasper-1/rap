@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut engine = AudioEngine::new();
 
-    engine.play(&path).await;
+    engine.play(&path).await?;
 
     // Ждём, пока трек начнёт играть (загрузится и не будет пустым)
     let mut loaded = false;
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !loaded {
         eprintln!("Failed to load track: {}", path);
-        engine.shutdown().await;
+        engine.shutdown().await?;
         return Ok(());
     }
 
@@ -46,6 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    engine.shutdown().await;
+    engine.shutdown().await?;
     Ok(())
 }

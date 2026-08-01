@@ -48,9 +48,11 @@ mod tests {
 
     fn test_conn(name: &str) -> Connection {
         let dir = std::env::temp_dir().join(format!("rap_store_core_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("тестовая папка не создалась");
         let path = dir.join(format!("{name}.db"));
-        let _ = std::fs::remove_file(&path);
+        if path.exists() {
+            std::fs::remove_file(&path).expect("тестовый файл не удалился");
+        }
         open(&path).expect("открытие БД")
     }
 

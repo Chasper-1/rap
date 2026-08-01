@@ -1,6 +1,6 @@
 [package]
 name = "rap"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 
 [workspace]
@@ -9,6 +9,7 @@ members = ["rap-engine", "rap-tui", "lib/rap-store"]
 [workspace.dependencies]
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
+anyhow = "1.0.104"
 
 
 [dependencies]

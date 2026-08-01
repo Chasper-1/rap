@@ -1,11 +1,12 @@
 [package]
 name = "rap-tui"
-version = "0.2.0"
+version = "0.2.2"
 edition = "2024"
 
 [dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+
 crossterm = "0.29.0"
 rap-engine = { path = "../rap-engine" }
 rap-store = { path = "../lib/rap-store" }
-
-tokio.workspace = true

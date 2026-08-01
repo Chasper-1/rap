@@ -24,7 +24,7 @@ async fn main() {
         Some(l) => l,
         None => store.get_lang().await.unwrap_or_else(|| "ru".to_string()),
     };
-    let _ = store.set_lang(&lang).await;
+    store.set_lang(&lang).await;
 
     let strings = i18n::Strings::load(&lang);
     let root =
@@ -48,22 +48,24 @@ async fn main() {
     }
     let mut stdout = io::stdout();
     // EnableMouseCapture перехватывает клики терминалом — текст не выделяется
-    let _ = execute!(
+    execute!(
         stdout,
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture
-    );
+    )
+    .unwrap_or_else(|e| panic!("не удалось включить альтернативный экран: {e}"));
 
     let mut app = app::App::new(strings, root).await;
     app.run().await;
     store.shutdown();
 
-    let _ = execute!(
+    execute!(
         stdout,
         crossterm::event::DisableMouseCapture,
         LeaveAlternateScreen
-    );
-    let _ = disable_raw_mode();
+    )
+    .unwrap_or_else(|e| panic!("не удалось выключить альтернативный экран: {e}"));
+    disable_raw_mode().unwrap_or_else(|e| panic!("не удалось выключить raw mode: {e}"));
 }
 
 /// Разбор аргументов: `rap-tui [путь-к-папке] [--lang код]`.

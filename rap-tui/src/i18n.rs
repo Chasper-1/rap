@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn load_from_file_applies_keys() {
         let dir = std::env::temp_dir().join(format!("rap_i18n_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("тестовая папка не создалась");
         let file = dir.join("lang_test.txt");
         std::fs::write(
             &file,
@@ -136,7 +136,7 @@ mod tests {
         assert_eq!(s.header, "Dir: {path}");
         // не тронутые ключи — дефолты
         assert_eq!(s.paused, Strings::defaults().paused);
-        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::remove_dir_all(&dir).expect("тестовая папка не удалилась");
     }
 
     #[test]
