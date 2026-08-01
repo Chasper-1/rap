@@ -2,9 +2,11 @@ use std::fs::File;
 use std::path::Path;
 use std::time::Duration;
 
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::CODEC_ID_NULL_AUDIO;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::probe::Hint;
 
 // Определяет длительность аудиофайла из его заголовков и метаданных,
 // без полного декодирования.
@@ -15,23 +17,25 @@ pub fn probe_duration(path: &Path) -> Option<Duration> {
     let file = File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
-    let probed = symphonia::default::get_probe()
-        .format(
+    let reader = symphonia::default::get_probe()
+        .probe(
             &Hint::new(),
             mss,
-            &FormatOptions::default(),
-            &Default::default(),
+            FormatOptions::default(),
+            Default::default(),
         )
         .ok()?;
 
-    let track = probed
-        .format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)?;
+    let track = reader.tracks().iter().find(|t| match &t.codec_params {
+        Some(CodecParameters::Audio(p)) => p.codec != CODEC_ID_NULL_AUDIO,
+        _ => false,
+    })?;
 
-    let n_frames = track.codec_params.n_frames?;
-    let sample_rate = track.codec_params.sample_rate?;
+    let n_frames = track.num_frames?;
+    let sample_rate = match &track.codec_params {
+        Some(CodecParameters::Audio(p)) => p.sample_rate?,
+        _ => return None,
+    };
 
     Some(Duration::from_secs_f64(
         n_frames as f64 / sample_rate as f64,
