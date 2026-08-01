@@ -1,12 +1,60 @@
 use ogg::PacketReader;
-use opus_codec::{Channels, Decoder as OpusDecoder, SampleRate as OpusSampleRate};
 use rodio::Source;
+use rusty_opus::OpusDecoder;
 use std::io::{Read, Seek};
 use std::num::NonZero;
 use std::time::Duration;
 
 // Максимальный кадр Opus при 48 кГц: 120 мс * 48000 = 5760 сэмплов на канал.
 const MAX_FRAME_SAMPLES: usize = 5760;
+
+// Сэмплов на канал для одного кадра при 48 кГц по TOC-конфигу (как в
+// examples/decode_bit.rs из rusty-opus: 2.5 мс = 120 сэмплов).
+fn samples_per_frame_48k(config: u8) -> usize {
+    match config {
+        0..=11 => {
+            // SILK: 10/20/40/60 мс.
+            let ms = [10usize, 20, 40, 60][(config % 4) as usize];
+            ms * 48
+        }
+        12..=15 => {
+            // Hybrid: 10/20 мс.
+            let ms = [10usize, 20][(config % 2) as usize];
+            ms * 48
+        }
+        _ => {
+            // CELT: 2.5/5/10/20 мс.
+            match config % 4 {
+                0 => 120,
+                1 => 240,
+                2 => 480,
+                _ => 960,
+            }
+        }
+    }
+}
+
+// Суммарный размер кадра пакета (сэмплов на канал) по его TOC-байту.
+fn packet_frame_size(payload: &[u8], rate: i32) -> usize {
+    let Some(&toc) = payload.first() else {
+        return 960; // Пустой пакет = PLC: декодер выдаст кадр тишины.
+    };
+    let config = toc >> 3;
+    let code = toc & 0x03;
+    let frames = match code {
+        0 => 1,
+        1 | 2 => 2,
+        _ => {
+            if payload.len() >= 2 {
+                usize::from(payload[1] & 0x3F)
+            } else {
+                1
+            }
+        }
+    };
+    let per = samples_per_frame_48k(config) * rate as usize / 48000;
+    per * frames
+}
 
 pub struct OpusSource<R: Read + Seek> {
     packet_reader: PacketReader<R>,
@@ -25,12 +73,9 @@ pub struct OpusSource<R: Read + Seek> {
 impl<R: Read + Seek> OpusSource<R> {
     pub fn new(reader: R, channels: u16) -> Option<Self> {
         let ch = usize::from(channels).clamp(1, 2);
-        let opus_channels = if ch == 1 {
-            Channels::Mono
-        } else {
-            Channels::Stereo
-        };
-        let decoder = OpusDecoder::new(OpusSampleRate::Hz48000, opus_channels).ok()?;
+        // rusty-opus — чистый Rust: SIMD-ядра (SSE2/AVX/AVX2/FMA, NEON на ARM)
+        // подключаются runtime-детекцией при декодировании, без флагов сборки.
+        let decoder = OpusDecoder::new(48000, ch).ok()?;
         let mut packet_reader = PacketReader::new(reader);
 
         // Pre-skip из первого пакета OpusHead (байты 10..12, little-endian):
@@ -63,9 +108,13 @@ impl<R: Read + Seek> OpusSource<R> {
                     {
                         continue;
                     }
+                    // frame_size для decode() должен быть ТОЧНЫМ размером кадра из
+                    // TOC пакета: декодер возвращает переданный frame_size, а в
+                    // буфер пишет только фактический (count * n * каналов).
+                    let fs = packet_frame_size(&packet.data, 48000).min(MAX_FRAME_SAMPLES);
                     if let Ok(decoded) =
                         self.decoder
-                            .decode_float(&packet.data, &mut self.sample_buffer, false)
+                            .decode(&packet.data, fs, &mut self.sample_buffer)
                     {
                         self.decoded_len = decoded * self.channels as usize;
                         self.buffer_pos = 0;
@@ -132,13 +181,14 @@ impl<R: Read + Seek + Send> Source for OpusSource<R> {
                 underlying_source: "OpusSource",
             });
         }
-        // Сбрасываем состояние кодера, иначе остатки старой позиции
-        // прорываются посторонними звуками после перемотки.
-        self.decoder
-            .reset()
-            .map_err(|_| rodio::source::SeekError::NotSupported {
+        // Сбрасываем состояние декодера, иначе остатки старой позиции
+        // прорываются посторонними звуками после перемотки (API rusty-opus
+        // не имеет reset() — декодер пересоздаётся, это дёшево).
+        self.decoder = OpusDecoder::new(48000, self.channels as usize).map_err(|_| {
+            rodio::source::SeekError::NotSupported {
                 underlying_source: "OpusSource",
-            })?;
+            }
+        })?;
         self.decoded_len = 0;
         self.buffer_pos = 0;
         self.skip_remaining = 0;
@@ -155,45 +205,63 @@ mod tests {
 
     #[test]
     fn decoder_new_valid_params() {
-        assert!(OpusDecoder::new(OpusSampleRate::Hz48000, Channels::Mono).is_ok());
-        assert!(OpusDecoder::new(OpusSampleRate::Hz48000, Channels::Stereo).is_ok());
-        assert!(OpusDecoder::new(OpusSampleRate::Hz8000, Channels::Mono).is_ok());
+        assert!(OpusDecoder::new(48000, 1).is_ok());
+        assert!(OpusDecoder::new(48000, 2).is_ok());
+        assert!(OpusDecoder::new(8000, 1).is_ok());
     }
 
     #[test]
-    fn channels_as_usize() {
-        assert_eq!(Channels::Mono.as_usize(), 1);
-        assert_eq!(Channels::Stereo.as_usize(), 2);
+    fn decode_empty_packet_is_plc() {
+        // Пустой пакет = потеря пакета: декодер выдаёт concealment
+        // (кадр тишины/экстраполяции), а не ошибку.
+        let mut decoder = OpusDecoder::new(48000, 2).unwrap();
+        let mut buf = vec![0.0f32; 960 * 2];
+        assert_eq!(decoder.decode(&[], 960, &mut buf).unwrap(), 960);
     }
 
     #[test]
-    fn sample_rate_is_valid() {
-        assert!(OpusSampleRate::Hz48000.is_valid());
-        assert!(OpusSampleRate::Hz8000.is_valid());
-        assert!(OpusSampleRate::Hz24000.is_valid());
-    }
-
-    #[test]
-    fn decode_float_rejects_small_output() {
-        let mut decoder = OpusDecoder::new(OpusSampleRate::Hz48000, Channels::Stereo).unwrap();
-        // Пустой буфер и буфер, некратный каналам, отклоняются до декодирования.
-        assert!(decoder.decode_float(&[], &mut [], false).is_err());
+    fn decode_rejects_small_output() {
+        let mut decoder = OpusDecoder::new(48000, 2).unwrap();
+        // Буфер меньше кадра (frame_size * каналы) декодировать нельзя.
         assert!(
             decoder
-                .decode_float(&[0xFF, 0xFE], &mut [0.0f32; 3], false)
+                .decode(&[0xFF, 0xFE], 5760, &mut [0.0f32; 3])
                 .is_err()
         );
     }
 
     #[test]
-    fn decode_float_rejects_oversized_buffer() {
-        let mut decoder = OpusDecoder::new(OpusSampleRate::Hz48000, Channels::Stereo).unwrap();
-        // Буфер больше максимального кадра (5760 сэмплов на канал) отклоняется.
-        let mut big = vec![0.0f32; (MAX_FRAME_SAMPLES + 1) * 2];
-        assert!(
-            decoder
-                .decode_float(&[0xFF, 0xFE], &mut big, false)
-                .is_err()
+    fn frame_size_matches_toc_coding() {
+        // 0xF8: CELT, fullband, 20 мс, mono -> 960 сэмплов/канал (48 кГц).
+        assert_eq!(packet_frame_size(&[0xF8], 48000), 960);
+        // 0x00: SILK 10 мс, 1 кадр -> 480 сэмплов/канал.
+        assert_eq!(packet_frame_size(&[0x00], 48000), 480);
+        // 0x41: SILK 10 мс (config 8), 2 кадра (code=1) -> 2 * 480.
+        assert_eq!(packet_frame_size(&[0x41], 48000), 960);
+    }
+
+    #[test]
+    fn roundtrip_encode_decode_produces_audio() {
+        use rusty_opus::{Application, OpusEncoder};
+        // Реальный цикл: кодируем синус 20 мс, декодируем с точным размером
+        // кадра из TOC. Сэмплы должны быть слышимыми (не нулями) — это ловит
+        // регрессию, когда decode() получал константу 5760 вместо размера кадра.
+        let mut encoder = OpusEncoder::new(48000, 1, Application::Audio).unwrap();
+        let mut decoder = OpusDecoder::new(48000, 1).unwrap();
+        let frame_size = 960usize;
+        let input: Vec<f32> = (0..frame_size)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let mut packet = [0u8; 4096];
+        let len = encoder.encode(&input, frame_size, &mut packet).unwrap();
+        let pkt = &packet[..len];
+        assert_eq!(packet_frame_size(pkt, 48000), frame_size);
+        let mut out = vec![0.0f32; frame_size];
+        assert_eq!(
+            decoder.decode(pkt, frame_size, &mut out).unwrap(),
+            frame_size
         );
+        let peak = out.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!(peak > 0.1, "декодер выдал тишину: peak={peak}");
     }
 }
