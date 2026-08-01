@@ -3,26 +3,20 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
-use rap_engine::AudioEngine;
-use rap_engine::probe::probe_duration;
-use rap_engine::tokio::select;
-use rap_engine::tokio::time::sleep;
+use rap_engine::{AudioEngine, probe::probe_duration, tokio::{select, time::sleep}};
 use rap_store::Store;
 
-use crate::i18n::Strings;
-use crate::queue;
-use crate::scanner::{self, Entry};
-use crate::ui;
+use crate::{i18n::Strings, queue, scanner::{self, Entry}, ui};
 
-/// Интервал тика перерисовки/проверки конца трека.
+// Интервал тика перерисовки/проверки конца трека.
 const TICK: Duration = Duration::from_millis(150);
-/// Сколько ждём после запуска трека, прежде чем считать его законченным.
+// Сколько ждём после запуска трека, прежде чем считать его законченным.
 const START_GRACE: Duration = Duration::from_secs(2);
-/// Порог двойного клика мыши.
+// Порог двойного клика мыши.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-/// Шаг изменения громкости.
+// Шаг изменения громкости.
 const VOLUME_STEP: f32 = 0.05;
-/// Шаг перемотки, секунд.
+// Шаг перемотки, секунд.
 const SEEK_STEP: i64 = 5;
 
 struct Track {
@@ -32,8 +26,8 @@ struct Track {
     started: Instant,
 }
 
-/// Падает с понятным сообщением, если движок не принял команду
-/// (интерфейс мёртв — продолжать работу нельзя).
+// Падает с понятным сообщением, если движок не принял команду
+// (интерфейс мёртв — продолжать работу нельзя).
 fn or_die(res: anyhow::Result<()>, what: &str) {
     res.unwrap_or_else(|e| panic!("{what}: {e}"));
 }
@@ -202,8 +196,8 @@ impl App {
         );
     }
 
-    /// Перемотка по клику на полоске прогресса: позиция пропорциональна
-    /// столбцу. Полоска обрамлена '[ ]' — клик считается по внутренней части.
+    // Перемотка по клику на полоске прогресса: позиция пропорциональна
+    // столбцу. Полоска обрамлена '[ ]' — клик считается по внутренней части.
     async fn seek_to_click(&mut self, column: u16, width: u16) {
         let Some(duration) = self.track.as_ref().and_then(|t| t.duration) else {
             return;
@@ -320,7 +314,7 @@ impl App {
         self.select_entry_of_current();
     }
 
-    /// Авто-переход на следующий файл после окончания текущего.
+    // Авто-переход на следующий файл после окончания текущего.
     async fn on_tick(&mut self) {
         let Some(track) = self.track.as_ref() else {
             return;
@@ -343,7 +337,7 @@ impl App {
         }
     }
 
-    /// Подсвечивает в списке файл, который сейчас играет.
+    // Подсвечивает в списке файл, который сейчас играет.
     fn select_entry_of_current(&mut self) {
         let Some(track) = &self.track else {
             return;
